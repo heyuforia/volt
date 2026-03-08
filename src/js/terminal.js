@@ -420,13 +420,10 @@ function renderTabs() {
       closeTab(tab.id);
     });
 
-    let clickTimer = null;
-
     // Double-click to rename (terminal tabs only)
     if (tab.type === 'terminal') {
       nameSpan.addEventListener('dblclick', (e) => {
         e.stopPropagation();
-        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
 
         const input = document.createElement('input');
         input.value = tab.name;
@@ -449,8 +446,7 @@ function renderTabs() {
 
     tabEl.addEventListener('click', () => {
       if (dragState) return;
-      if (clickTimer) clearTimeout(clickTimer);
-      clickTimer = setTimeout(() => activateTab(tab.id), tab.type === 'terminal' ? 200 : 0);
+      activateTab(tab.id);
     });
 
     tabEl.appendChild(tabIcon);
