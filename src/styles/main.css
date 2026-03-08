@@ -566,7 +566,7 @@ button:hover {
   align-items: center;
   padding: 0 14px;
   height: 36px;
-  background: #1c1c1c;
+  background: #191919;
   color: #7a7a8a;
   font-size: 12px;
   white-space: nowrap;
@@ -578,7 +578,7 @@ button:hover {
 }
 .tab:hover {
   color: #d4d4d4;
-  background: #222222;
+  background: #1e1e1e;
 }
 .tab.active {
   background: #141414;
