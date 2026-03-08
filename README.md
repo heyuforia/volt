@@ -1,6 +1,8 @@
 # Volt
 
-A lightweight terminal workstation built with Tauri. Designed for developers who live in the terminal and don't need a full IDE — just a file tree, multiple terminals, and a fast editor.
+A lightweight terminal workstation built with Tauri.
+
+I built Volt for myself. VSCodium was eating 300-800 MB of RAM for what I was using it for, so I built something lighter. If you find it useful, use it.
 
 ![Volt Welcome](screenshots/volt1.png)
 
