@@ -21,6 +21,13 @@
   font-display: swap;
 }
 @font-face {
+  font-family: 'IBM Plex Sans';
+  src: url('/src/assets/fonts/IBMPlexSans-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
   font-family: 'JetBrains Mono';
   src: url('/src/assets/fonts/JetBrainsMono-Regular.woff2') format('woff2');
   font-weight: 400;
@@ -1647,7 +1654,7 @@ button:hover {
 /* Bold & italic */
 .md-preview strong {
   color: #f0f0f0;
-  font-weight: 600;
+  font-weight: 700;
 }
 .md-preview em {
   color: #b8b8c0;
