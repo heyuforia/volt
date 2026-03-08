@@ -468,7 +468,7 @@ async function saveActiveFile(tab) {
 }
 
 function scheduleAutoSave(tab) {
-  const delay = config?.editor?.autoSaveDelay || 1500;
+  const delay = config?.editor?.autoSaveDelay ?? 1500;
 
   // Debounce swap file write (crash recovery)
   clearTimeout(swapWriteTimers.get(tab.filePath));

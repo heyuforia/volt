@@ -123,7 +123,7 @@ fn create_lock(folder: &str, app: tauri::AppHandle) -> Result<(), String> {
     let shutdown_clone = shutdown.clone();
 
     {
-        let mut state = INSTANCE_STATE.lock().unwrap();
+        let mut state = INSTANCE_STATE.lock().map_err(|e| format!("Lock error: {}", e))?;
         state.lock_path = Some(lock);
         state.shutdown = Some(shutdown);
     }
@@ -165,7 +165,7 @@ fn create_lock(folder: &str, app: tauri::AppHandle) -> Result<(), String> {
 
 /// Remove the current lock file and signal the listener thread to exit.
 fn release_lock_internal() {
-    let mut state = INSTANCE_STATE.lock().unwrap();
+    let Ok(mut state) = INSTANCE_STATE.lock() else { return };
     if let Some(ref lock_path) = state.lock_path {
         let _ = fs::remove_file(lock_path);
     }

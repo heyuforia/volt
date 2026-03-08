@@ -300,7 +300,7 @@ function initTabDrag(tabEl, tab) {
     const onMouseMove = (e) => {
       if (!dragging && Math.abs(e.clientX - startX) > threshold) {
         dragging = true;
-        dragState = { tabId: tab.id };
+        dragState = true;
         tabEl.classList.add('dragging');
         document.body.style.cursor = 'grabbing';
         document.body.style.userSelect = 'none';
@@ -646,7 +646,7 @@ function fitTerminal(tab) {
         id: tab.ptyId,
         cols: dims.cols,
         rows: dims.rows,
-      });
+      }).catch(() => {});
     }
   } catch { /* terminal not ready yet */ }
 }

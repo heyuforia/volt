@@ -175,8 +175,16 @@ pub fn load_config() -> Result<VoltConfig, String> {
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read config: {}", e))?;
 
-    let config: VoltConfig = serde_json::from_str(&content)
-        .unwrap_or_else(|_| VoltConfig::default());
+    let config: VoltConfig = match serde_json::from_str(&content) {
+        Ok(c) => c,
+        Err(_) => {
+            // Back up corrupt config so the user can recover it
+            let backup = path.with_extension("json.bak");
+            let _ = fs::copy(&path, &backup);
+            eprintln!("Warning: config.json was corrupt, backed up to config.json.bak");
+            VoltConfig::default()
+        }
+    };
 
     Ok(config)
 }

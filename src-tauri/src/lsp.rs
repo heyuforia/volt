@@ -333,6 +333,7 @@ pub fn start_analyzer(app: AppHandle, project_path: String) -> Result<Option<Str
     // Reader thread — reads LSP responses and emits events to frontend
     let read_app = app.clone();
     let root_path = project_path.clone();
+    let expected_init_id = init_id;
     thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
         let mut initialized = false;
@@ -385,7 +386,7 @@ pub fn start_analyzer(app: AppHandle, project_path: String) -> Result<Option<Str
 
             // Handle initialize response → send initialized notification
             if !initialized {
-                if msg.get("id").is_some() && msg.get("result").is_some() {
+                if msg.get("id").and_then(|v| v.as_u64()) == Some(expected_init_id) && msg.get("result").is_some() {
                     initialized = true;
                     let notif = serde_json::json!({
                         "jsonrpc": "2.0",

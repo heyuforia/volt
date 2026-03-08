@@ -17,7 +17,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 #[tauri::command]
 pub fn get_system_stats() -> Result<SystemStats, String> {
     let pid = Pid::from_u32(std::process::id());
-    let mut sys = SYS.lock().unwrap();
+    let mut sys = SYS.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     // First call: baseline refresh so next call can compute CPU delta.
     // CPU will read 0% on first call — acceptable, next poll (5s later) will be accurate.
