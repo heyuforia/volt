@@ -115,17 +115,6 @@ Volt stores config at `~/.volt/config.json`. Settings are accessible via the gea
 - **[portable-pty](https://docs.rs/portable-pty)** — Cross-platform PTY management
 - **Vanilla JS** — No React, Vue, Angular, or Svelte
 
-## Philosophy
-
-Volt is intentionally minimal. It doesn't have:
-
-- Extensions or plugin system
-- IntelliSense or LSP autocomplete (diagnostics only — errors and warnings, no code completion)
-- Git integration (use the terminal)
-- Themes (the stealth black + purple/yellow identity is the brand)
-
-If you need those things, use VSCode. If you don't, you just saved 750 MB of RAM.
-
 ## License
 
 [MIT](LICENSE)
