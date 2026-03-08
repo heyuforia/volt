@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { escapeAttr } from './utils.js';
 
 let panelEl = null;
 let visible = false;
@@ -76,7 +77,7 @@ function openSettings(getConfig, onConfigChanged) {
             </div>
             <input type="text" class="settings-input-wide" id="set-shell"
               placeholder="auto-detect"
-              value="${config.terminal?.shell || ''}" />
+              value="${escapeAttr(config.terminal?.shell || '')}" />
           </div>
 
           <div class="settings-section">Editor</div>
@@ -111,7 +112,7 @@ function openSettings(getConfig, onConfigChanged) {
           </div>
           <div class="settings-row-full">
             <input type="text" class="settings-input-full" id="set-ignored"
-              value="${(config.ignoredPatterns || []).join(', ')}" />
+              value="${escapeAttr((config.ignoredPatterns || []).join(', '))}" />
           </div>
         </div>
         <div class="settings-footer">

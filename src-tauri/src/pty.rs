@@ -20,10 +20,10 @@ static PTY_REGISTRY: std::sync::LazyLock<Mutex<HashMap<String, PtyInstance>>> =
 static TERMINAL_COUNTER: std::sync::LazyLock<Mutex<u32>> =
     std::sync::LazyLock::new(|| Mutex::new(0));
 
-fn next_terminal_id() -> String {
-    let mut counter = TERMINAL_COUNTER.lock().unwrap();
+fn next_terminal_id() -> Result<String, String> {
+    let mut counter = TERMINAL_COUNTER.lock().map_err(|e| format!("Lock error: {}", e))?;
     *counter += 1;
-    format!("terminal-{}", counter)
+    Ok(format!("terminal-{}", counter))
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -87,7 +87,7 @@ pub fn spawn_terminal(
     // Drop slave immediately — we only need the master side
     drop(pair.slave);
 
-    let id = next_terminal_id();
+    let id = next_terminal_id()?;
 
     let writer: PtyWriter = Arc::new(Mutex::new(
         pair.master
@@ -104,7 +104,7 @@ pub fn spawn_terminal(
         Arc::new(Mutex::new(Some(pair.master)));
 
     {
-        let mut registry = PTY_REGISTRY.lock().unwrap();
+        let mut registry = PTY_REGISTRY.lock().map_err(|e| format!("Lock error: {}", e))?;
         registry.insert(
             id.clone(),
             PtyInstance {
@@ -160,8 +160,9 @@ pub fn spawn_terminal(
             },
         );
         // Clean up from registry
-        let mut registry = PTY_REGISTRY.lock().unwrap();
-        registry.remove(&exit_id);
+        if let Ok(mut registry) = PTY_REGISTRY.lock() {
+            registry.remove(&exit_id);
+        }
     });
 
     Ok(id)
@@ -170,14 +171,14 @@ pub fn spawn_terminal(
 #[tauri::command]
 pub fn write_terminal(id: String, data: String) -> Result<(), String> {
     let writer = {
-        let registry = PTY_REGISTRY.lock().unwrap();
+        let registry = PTY_REGISTRY.lock().map_err(|e| format!("Lock error: {}", e))?;
         let instance = registry
             .get(&id)
             .ok_or_else(|| format!("Terminal not found: {}", id))?;
         instance.writer.clone()
     }; // registry lock dropped here
 
-    let mut writer = writer.lock().unwrap();
+    let mut writer = writer.lock().map_err(|e| format!("Lock error: {}", e))?;
     writer
         .write_all(data.as_bytes())
         .map_err(|e| format!("Failed to write to PTY: {}", e))?;
@@ -191,14 +192,14 @@ pub fn write_terminal(id: String, data: String) -> Result<(), String> {
 #[tauri::command]
 pub fn resize_terminal(id: String, cols: u16, rows: u16) -> Result<(), String> {
     let master = {
-        let registry = PTY_REGISTRY.lock().unwrap();
+        let registry = PTY_REGISTRY.lock().map_err(|e| format!("Lock error: {}", e))?;
         let instance = registry
             .get(&id)
             .ok_or_else(|| format!("Terminal not found: {}", id))?;
         instance.master.clone()
     }; // registry lock dropped here
 
-    let master_lock = master.lock().unwrap();
+    let master_lock = master.lock().map_err(|e| format!("Lock error: {}", e))?;
     if let Some(ref m) = *master_lock {
         m.resize(PtySize {
             rows,
@@ -214,11 +215,12 @@ pub fn resize_terminal(id: String, cols: u16, rows: u16) -> Result<(), String> {
 
 #[tauri::command]
 pub fn kill_terminal(id: String) -> Result<(), String> {
-    let mut registry = PTY_REGISTRY.lock().unwrap();
+    let mut registry = PTY_REGISTRY.lock().map_err(|e| format!("Lock error: {}", e))?;
     if let Some(instance) = registry.remove(&id) {
         // Drop master to close the PTY
-        let mut master_lock = instance.master.lock().unwrap();
-        *master_lock = None;
+        if let Ok(mut master_lock) = instance.master.lock() {
+            *master_lock = None;
+        }
     }
     Ok(())
 }

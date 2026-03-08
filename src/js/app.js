@@ -400,14 +400,28 @@ function initDragDrop() {
     e.preventDefault();
   });
 
-  // Use Tauri's native drag-drop for actual folder opening
+  // Use Tauri's native drag-drop for folders and files
   try {
     import('@tauri-apps/api/webviewWindow').then(async (mod) => {
       const { getCurrentWebviewWindow } = mod;
       const webview = getCurrentWebviewWindow();
-      await webview.onDragDropEvent((event) => {
+      await webview.onDragDropEvent(async (event) => {
         if (event.payload.type === 'drop' && event.payload.paths?.length > 0) {
-          openFolder(event.payload.paths[0]);
+          const path = event.payload.paths[0];
+          // Check if it's a directory
+          try {
+            await invoke('read_directory', { path });
+            openFolder(path);
+          } catch {
+            // It's a file — paste path into terminal if active, otherwise open in editor
+            const tab = getActiveTab();
+            if (tab?.type === 'terminal' && tab.ptyId && !tab.exited) {
+              invoke('write_terminal', { id: tab.ptyId, data: path }).catch(() => {});
+            } else {
+              const name = path.split(/[\\/]/).pop();
+              openFile({ path, name, is_dir: false });
+            }
+          }
         }
       });
     }).catch(() => { /* drag-drop not available */ });
@@ -424,7 +438,6 @@ const saveCooldowns = new Map(); // path -> timestamp, ignore watcher events rig
 const autoSaveTimers = new Map(); // filePath -> timeout ID for debounced auto-save
 const swapWriteTimers = new Map(); // filePath -> timeout ID for debounced swap writes
 const statusCursor = document.getElementById('status-cursor');
-let previewActive = false;
 
 // Configure marked for GFM
 marked.setOptions({
@@ -670,10 +683,10 @@ function toggleMarkdownPreview() {
   const tab = getActiveTab();
   if (!tab || tab.type !== 'file') return;
 
-  previewActive = !previewActive;
-  btnMdPreview.classList.toggle('active', previewActive);
+  tab.previewActive = !tab.previewActive;
+  btnMdPreview.classList.toggle('active', tab.previewActive);
 
-  if (previewActive) {
+  if (tab.previewActive) {
     // Create or reuse preview container
     let preview = tab.wrapper.querySelector('.md-preview');
     if (!preview) {
@@ -841,9 +854,17 @@ async function init() {
     openFile({ path: filePath, name, is_dir: false }, lineNumber);
   });
 
-  // Wire file click handler
-  setFileClickHandler((entry) => {
-    if (!entry.is_dir) openFile(entry);
+  // Wire file click handler (shift+click pastes path into active terminal)
+  setFileClickHandler((entry, shiftKey) => {
+    if (entry.is_dir) return;
+    if (shiftKey) {
+      const tab = getActiveTab();
+      if (tab?.type === 'terminal' && tab.ptyId && !tab.exited) {
+        invoke('write_terminal', { id: tab.ptyId, data: entry.path }).catch(() => {});
+        return;
+      }
+    }
+    openFile(entry);
   });
 
   // Update open tabs when files are renamed or deleted via context menu
@@ -899,16 +920,18 @@ async function init() {
         statusCursor.textContent = `Ln ${line.number}, Col ${pos - line.from + 1}`;
       }
 
-      // Reset preview state when switching tabs
-      if (previewActive) {
-        previewActive = false;
-        btnMdPreview.classList.remove('active');
-      }
-      // Ensure editor is visible and preview hidden for the new tab
+      // Sync preview button with this tab's preview state
+      btnMdPreview.classList.toggle('active', !!tab.previewActive);
+      // Ensure correct visibility based on this tab's preview state
       const cmEl = tab.wrapper.querySelector('.cm-editor');
-      if (cmEl) cmEl.style.display = '';
       const preview = tab.wrapper.querySelector('.md-preview');
-      if (preview) preview.classList.remove('active');
+      if (tab.previewActive) {
+        if (cmEl) cmEl.style.display = 'none';
+        if (preview) preview.classList.add('active');
+      } else {
+        if (cmEl) cmEl.style.display = '';
+        if (preview) preview.classList.remove('active');
+      }
     } else {
       breadcrumbBar.classList.add('hidden');
       statusCursor.classList.add('hidden');

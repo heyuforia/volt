@@ -32,7 +32,7 @@ fn main() {
             // so they reach our JavaScript keydown handlers instead.
             #[cfg(target_os = "windows")]
             {
-                let window = app.get_webview_window("main").unwrap();
+                if let Some(window) = app.get_webview_window("main") {
                 let _ = window.with_webview(|webview| unsafe {
                     use webview2_com::Microsoft::Web::WebView2::Win32::*;
                     use windows_core::Interface;
@@ -46,6 +46,7 @@ fn main() {
                         .unwrap();
                     let _ = settings.SetAreBrowserAcceleratorKeysEnabled(false);
                 });
+                }
             }
 
             Ok(())

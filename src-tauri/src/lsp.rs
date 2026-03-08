@@ -210,10 +210,10 @@ static LSP: std::sync::LazyLock<Mutex<LspState>> =
         request_id: 0,
     }));
 
-fn next_request_id() -> u64 {
-    let mut state = LSP.lock().unwrap();
+fn next_request_id() -> Result<u64, String> {
+    let mut state = LSP.lock().map_err(|e| format!("Lock error: {}", e))?;
     state.request_id += 1;
-    state.request_id
+    Ok(state.request_id)
 }
 
 // ── LSP Protocol ──
@@ -232,7 +232,12 @@ fn send_lsp_message(writer: &mut dyn Write, msg: &serde_json::Value) -> Result<(
 }
 
 fn uri_to_relative(uri: &str, root: &str) -> String {
+    // On Windows: file:///C:/foo → C:\foo (strip 3 slashes)
+    // On Unix:    file:///home/foo → /home/foo (strip 2 slashes to keep leading /)
+    #[cfg(target_os = "windows")]
     let path = uri.strip_prefix("file:///").unwrap_or(uri);
+    #[cfg(not(target_os = "windows"))]
+    let path = uri.strip_prefix("file://").unwrap_or(uri);
 
     #[cfg(target_os = "windows")]
     let (path, root_normalized) = (
@@ -293,14 +298,14 @@ pub fn start_analyzer(app: AppHandle, project_path: String) -> Result<Option<Str
         .ok_or("Failed to get LSP stdout")?;
 
     {
-        let mut state = LSP.lock().unwrap();
+        let mut state = LSP.lock().map_err(|e| format!("Lock error: {}", e))?;
         state.process = Some(child);
         state.writer = Some(Box::new(stdin));
         state.request_id = 0;
     }
 
     // Send LSP initialize request
-    let init_id = next_request_id();
+    let init_id = next_request_id()?;
     let init_msg = serde_json::json!({
         "jsonrpc": "2.0",
         "id": init_id,
@@ -319,7 +324,7 @@ pub fn start_analyzer(app: AppHandle, project_path: String) -> Result<Option<Str
     });
 
     {
-        let mut state = LSP.lock().unwrap();
+        let mut state = LSP.lock().map_err(|e| format!("Lock error: {}", e))?;
         if let Some(ref mut writer) = state.writer {
             send_lsp_message(writer.as_mut(), &init_msg)?;
         }
@@ -387,9 +392,10 @@ pub fn start_analyzer(app: AppHandle, project_path: String) -> Result<Option<Str
                         "method": "initialized",
                         "params": {}
                     });
-                    let mut state = LSP.lock().unwrap();
-                    if let Some(ref mut writer) = state.writer {
-                        let _ = send_lsp_message(writer.as_mut(), &notif);
+                    if let Ok(mut state) = LSP.lock() {
+                        if let Some(ref mut writer) = state.writer {
+                            let _ = send_lsp_message(writer.as_mut(), &notif);
+                        }
                     }
                 }
                 continue;
@@ -434,7 +440,7 @@ pub fn start_analyzer(app: AppHandle, project_path: String) -> Result<Option<Str
 }
 
 fn stop_analyzer_internal() -> Result<(), String> {
-    let mut state = LSP.lock().unwrap();
+    let mut state = LSP.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     if let Some(ref mut writer) = state.writer {
         let shutdown = serde_json::json!({

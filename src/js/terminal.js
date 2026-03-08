@@ -44,8 +44,14 @@ export function addFileTab(tab) {
   activateTab(tab.id);
 }
 
+const IS_WINDOWS = navigator.platform.startsWith('Win');
+function pathsEqual(a, b) {
+  if (IS_WINDOWS) return a.toLowerCase() === b.toLowerCase();
+  return a === b;
+}
+
 export function findTabByFilePath(path) {
-  return tabs.find(t => t.type === 'file' && t.filePath === path) || null;
+  return tabs.find(t => t.type === 'file' && pathsEqual(t.filePath, path)) || null;
 }
 
 export function getActiveTab() {
@@ -213,11 +219,34 @@ export async function createTerminalTab() {
 
   terminal.open(wrapper);
 
-  // Let Ctrl+Tab, Ctrl+Shift+Tab, and Ctrl+Shift+T/W bubble
-  // up to our global keydown handler instead of being swallowed by xterm.js
+  // Let specific combos bubble up to our global keydown handler
+  // instead of being swallowed by xterm.js.
+  // Ctrl+C: copy if selection exists, otherwise let xterm send SIGINT.
+  // Ctrl+V: paste from clipboard.
   terminal.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
     if (e.ctrlKey && e.key === 'Tab') return false;
-    if (e.ctrlKey && e.shiftKey) return false;
+    if (e.ctrlKey && e.shiftKey && ['T', 'W', 'F'].includes(e.key)) return false;
+
+    // Ctrl+C — copy selection (if any), otherwise let SIGINT through
+    if (e.ctrlKey && !e.shiftKey && e.key === 'c') {
+      if (terminal.hasSelection()) {
+        navigator.clipboard.writeText(terminal.getSelection());
+        terminal.clearSelection();
+        return false; // prevent xterm from sending SIGINT
+      }
+      return true; // no selection → normal SIGINT
+    }
+
+    // Ctrl+V — paste from clipboard
+    if (e.ctrlKey && !e.shiftKey && e.key === 'v') {
+      e.preventDefault(); // block browser paste event (xterm listens for it too)
+      navigator.clipboard.readText().then((text) => {
+        if (text) invoke('write_terminal', { id: ptyId, data: text }).catch(() => {});
+      }).catch(() => {});
+      return false;
+    }
+
     return true;
   });
 
@@ -534,7 +563,7 @@ export async function closeAllTabs() {
 }
 
 export function updateFileTabPath(oldPath, newPath, newName) {
-  const tab = tabs.find(t => t.type === 'file' && t.filePath === oldPath);
+  const tab = tabs.find(t => t.type === 'file' && pathsEqual(t.filePath, oldPath));
   if (!tab) return null;
   tab.filePath = newPath;
   tab.name = newName;
@@ -546,6 +575,12 @@ export function updateFileTabPath(oldPath, newPath, newName) {
 export function getFileTabsByPathPrefix(dirPath) {
   const withSlash = dirPath + '/';
   const withBackslash = dirPath + '\\';
+  if (IS_WINDOWS) {
+    const sl = withSlash.toLowerCase();
+    const bs = withBackslash.toLowerCase();
+    return tabs.filter(t => t.type === 'file' &&
+      (t.filePath.toLowerCase().startsWith(sl) || t.filePath.toLowerCase().startsWith(bs)));
+  }
   return tabs.filter(t => t.type === 'file' &&
     (t.filePath.startsWith(withSlash) || t.filePath.startsWith(withBackslash)));
 }

@@ -143,10 +143,10 @@ function renderEntries(container, entries, depth) {
       container.appendChild(item);
       container.appendChild(children);
     } else {
-      // Click to open file
+      // Click to open file (shift+click passes path to terminal)
       item.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (onFileClick) onFileClick(entry);
+        if (onFileClick) onFileClick(entry, e.shiftKey);
       });
       // Context menu for files
       item.addEventListener('contextmenu', (e) => showContextMenu(e, entry));
