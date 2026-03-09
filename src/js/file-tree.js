@@ -178,7 +178,7 @@ function applyGitStatusToTree() {
 function statusClass(status) {
   switch (status) {
     case 'M': return 'git-modified';
-    case 'U': case '?': return 'git-untracked';
+    case 'U': return 'git-untracked';
     case 'A': return 'git-added';
     case 'D': return 'git-deleted';
     default: return 'git-modified';

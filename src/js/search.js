@@ -110,14 +110,27 @@ function renderResults(results, query) {
       content.className = 'search-line-content';
 
       const line = match.line_content;
-      const idx = line.toLowerCase().indexOf(query.toLowerCase());
-      if (idx >= 0) {
-        content.appendChild(document.createTextNode(line.substring(0, idx)));
+      const lineLower = line.toLowerCase();
+      const queryLower = query.toLowerCase();
+      let lastEnd = 0;
+      let searchFrom = 0;
+      let found = false;
+      while (searchFrom < lineLower.length) {
+        const idx = lineLower.indexOf(queryLower, searchFrom);
+        if (idx === -1) break;
+        found = true;
+        if (idx > lastEnd) {
+          content.appendChild(document.createTextNode(line.substring(lastEnd, idx)));
+        }
         const mark = document.createElement('mark');
         mark.textContent = line.substring(idx, idx + query.length);
         content.appendChild(mark);
-        content.appendChild(document.createTextNode(line.substring(idx + query.length)));
-      } else {
+        lastEnd = idx + query.length;
+        searchFrom = lastEnd;
+      }
+      if (found && lastEnd < line.length) {
+        content.appendChild(document.createTextNode(line.substring(lastEnd)));
+      } else if (!found) {
         content.textContent = line;
       }
 

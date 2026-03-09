@@ -80,6 +80,7 @@ const DEFAULT_IGNORED: &[&str] = &[
 
 #[tauri::command]
 pub fn read_directory(path: String, ignored: Option<Vec<String>>) -> Result<Vec<DirectoryEntry>, String> {
+    validate_path(&path)?;
     let dir_path = Path::new(&path);
     if !dir_path.is_dir() {
         return Err(format!("Not a directory: {}", path));
@@ -370,9 +371,12 @@ fn collect_files_recursive(dir: &Path, ignored: &[String], files: &mut Vec<PathB
         if files.len() >= MAX_FILES { break; }
         let name = entry.file_name().to_string_lossy().to_string();
         if ignored.iter().any(|p| p == &name) { continue; }
-        if name.starts_with('.') { continue; }
+        // Hide internal swap/temp files
+        if name.ends_with(".volt-swap") || name.ends_with(".volt-tmp") { continue; }
         let path = entry.path();
         if path.is_dir() {
+            // Skip hidden directories (e.g. .git, .vscode) but not hidden files
+            if name.starts_with('.') { continue; }
             collect_files_recursive(&path, ignored, files, depth + 1)?;
         } else {
             files.push(path);

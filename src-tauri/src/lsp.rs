@@ -367,7 +367,7 @@ pub fn start_analyzer(app: AppHandle, project_path: String) -> Result<Option<Str
         "method": "initialize",
         "params": {
             "processId": std::process::id(),
-            "rootUri": format!("file:///{}", project_path.replace('\\', "/").trim_start_matches('/')),
+            "rootUri": path_to_uri(&project_path),
             "capabilities": {
                 "textDocument": {
                     "publishDiagnostics": {
