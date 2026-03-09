@@ -1035,6 +1035,7 @@ async function init() {
       swapWriteTimers.delete(tab.filePath);
       clearTimeout(lspChangeTimers.get(tab.filePath));
       lspChangeTimers.delete(tab.filePath);
+      saveCooldowns.delete(tab.filePath);
     }
   });
 

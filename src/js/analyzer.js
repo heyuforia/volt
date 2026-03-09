@@ -225,9 +225,12 @@ function updateStatusBar() {
   }
 
   const all = getAllDiagnostics();
-  const errors = all.filter(d => d.severity === 'error').length;
-  const warnings = all.filter(d => d.severity === 'warning').length;
-  const infos = all.filter(d => d.severity === 'info').length;
+  let errors = 0, warnings = 0, infos = 0;
+  for (const d of all) {
+    if (d.severity === 'error') errors++;
+    else if (d.severity === 'warning') warnings++;
+    else infos++;
+  }
 
   errorEl.textContent = errors;
   warnEl.textContent = warnings;
@@ -244,8 +247,11 @@ function togglePanel() {
 function renderPanel() {
   const list = document.getElementById('diag-list');
   const all = getAllDiagnostics();
-  const errors = all.filter(d => d.severity === 'error').length;
-  const warnings = all.filter(d => d.severity === 'warning').length;
+  let errors = 0, warnings = 0;
+  for (const d of all) {
+    if (d.severity === 'error') errors++;
+    else if (d.severity === 'warning') warnings++;
+  }
 
   const title = panelEl.querySelector('.diag-title');
   title.textContent = `PROBLEMS (${errors} error${errors !== 1 ? 's' : ''}, ${warnings} warning${warnings !== 1 ? 's' : ''})`;

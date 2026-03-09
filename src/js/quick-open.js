@@ -5,6 +5,7 @@ const input = document.getElementById('quick-open-input');
 const results = document.getElementById('quick-open-results');
 
 let allFiles = [];
+let allFilesLower = []; // cached lowercase versions to avoid re-computing per keystroke
 let selectedIndex = 0;
 let onOpen = null;
 
@@ -30,9 +31,11 @@ export function initQuickOpen(openCallback) {
 export async function showQuickOpen(projectPath, ignored) {
   try {
     allFiles = await invoke('list_all_files', { path: projectPath, ignored });
+    allFilesLower = allFiles.map(f => f.toLowerCase());
   } catch (e) {
     console.warn('Failed to list files:', e);
     allFiles = [];
+    allFilesLower = [];
   }
 
   input.value = '';
@@ -53,12 +56,14 @@ function filter(query) {
   if (!q) {
     matches = allFiles.slice(0, 50);
   } else {
-    matches = allFiles
-      .map(f => ({ path: f, score: fuzzyScore(f.toLowerCase(), q) }))
-      .filter(m => m.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 50)
-      .map(m => m.path);
+    // Only allocate scored objects for actual matches (avoids 100K short-lived objects)
+    const scored = [];
+    for (let i = 0; i < allFiles.length; i++) {
+      const score = fuzzyScore(allFilesLower[i], q);
+      if (score > 0) scored.push({ path: allFiles[i], score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    matches = scored.slice(0, 50).map(m => m.path);
   }
 
   results.innerHTML = '';

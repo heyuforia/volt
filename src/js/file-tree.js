@@ -16,6 +16,8 @@ let toastTimer = null;
 // Git status cache: relative path → status code ("M", "A", "D", "U")
 let gitStatusMap = {};
 let gitRoot = null;
+// Pre-computed set of dirty directory prefixes for O(1) folder status lookups
+let dirtyDirs = new Set();
 
 // Guard against concurrent loadDirectory calls (race condition → duplicate entries)
 let loadGeneration = 0;
@@ -77,10 +79,12 @@ export async function loadDirectory(path) {
   const gitPromise = invoke('git_status', { path }).then(result => {
     gitStatusMap = result.files;
     gitRoot = result.root;
+    rebuildDirtyDirs();
   }).catch(e => {
     console.warn('Failed to fetch git status:', e);
     gitStatusMap = {};
     gitRoot = null;
+    dirtyDirs.clear();
   });
 
   try {
@@ -107,10 +111,12 @@ export async function refreshGitStatus() {
     const result = await invoke('git_status', { path: rootPath });
     gitStatusMap = result.files;
     gitRoot = result.root;
+    rebuildDirtyDirs();
   } catch (e) {
     console.warn('Failed to refresh git status:', e);
     gitStatusMap = {};
     gitRoot = null;
+    dirtyDirs.clear();
   }
   applyGitStatusToTree();
 }
@@ -127,18 +133,28 @@ function getGitStatus(entryPath) {
   return gitStatusMap[relative] || null;
 }
 
+/// Build the dirtyDirs set from gitStatusMap. Each changed file's parent
+/// directory chain is added so getFolderGitStatus is O(1).
+function rebuildDirtyDirs() {
+  dirtyDirs.clear();
+  for (const relativePath of Object.keys(gitStatusMap)) {
+    const normalized = relativePath.replace(/\\/g, '/');
+    const parts = normalized.split('/');
+    for (let i = 1; i < parts.length; i++) {
+      dirtyDirs.add(parts.slice(0, i).join('/') + '/');
+    }
+  }
+}
+
 function getFolderGitStatus(entryPath) {
-  if (!gitRoot) return null;
+  if (!gitRoot || dirtyDirs.size === 0) return null;
   const normalized = entryPath.replace(/\\/g, '/');
   const root = gitRoot.replace(/\\/g, '/');
   const prefix = normalized.startsWith(root + '/')
     ? normalized.slice(root.length + 1) + '/'
     : null;
   if (!prefix) return null;
-  for (const key of Object.keys(gitStatusMap)) {
-    if (key.startsWith(prefix)) return true;
-  }
-  return null;
+  return dirtyDirs.has(prefix) ? true : null;
 }
 
 function applyGitStatusToTree() {

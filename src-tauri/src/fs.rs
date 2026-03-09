@@ -4,13 +4,34 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// Stores the pre-canonicalized project root (set once when a folder is opened).
 static PROJECT_ROOT: std::sync::LazyLock<Mutex<Option<PathBuf>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
 
+/// Cached canonical path to ~/.volt/ (resolved lazily on first successful access).
+static CACHED_VOLT_DIR: std::sync::LazyLock<Mutex<Option<PathBuf>>> =
+    std::sync::LazyLock::new(|| Mutex::new(None));
+
+/// Get the canonical ~/.volt/ path, caching after first successful resolution.
+fn get_canonical_volt_dir() -> Option<PathBuf> {
+    if let Ok(cache) = CACHED_VOLT_DIR.lock() {
+        if cache.is_some() {
+            return cache.clone();
+        }
+    }
+    let dir = dirs::home_dir()?.join(".volt");
+    let canonical = fs::canonicalize(&dir).ok()?;
+    if let Ok(mut cache) = CACHED_VOLT_DIR.lock() {
+        *cache = Some(canonical.clone());
+    }
+    Some(canonical)
+}
+
 /// Set the current project root (called when a folder is opened).
+/// Canonicalizes immediately so validate_path doesn't repeat the work.
 pub fn set_project_root(path: Option<PathBuf>) {
     if let Ok(mut root) = PROJECT_ROOT.lock() {
-        *root = path;
+        *root = path.and_then(|p| fs::canonicalize(&p).ok());
     }
 }
 
@@ -30,23 +51,18 @@ fn validate_path(path: &str) -> Result<PathBuf, String> {
         })
         .map_err(|e| format!("Path validation failed: {}", e))?;
 
-    // Always allow ~/.volt/ config directory
-    if let Some(home) = dirs::home_dir() {
-        let volt_dir = home.join(".volt");
-        if let Ok(canon_volt) = fs::canonicalize(&volt_dir) {
-            if target.starts_with(&canon_volt) {
-                return Ok(target);
-            }
+    // Always allow ~/.volt/ config directory (cached canonical path)
+    if let Some(volt_dir) = get_canonical_volt_dir() {
+        if target.starts_with(&volt_dir) {
+            return Ok(target);
         }
     }
 
-    // Check against project root
+    // Check against project root (pre-canonicalized at set time)
     if let Ok(root) = PROJECT_ROOT.lock() {
-        if let Some(ref root_path) = *root {
-            if let Ok(canon_root) = fs::canonicalize(root_path) {
-                if target.starts_with(&canon_root) {
-                    return Ok(target);
-                }
+        if let Some(ref canon_root) = *root {
+            if target.starts_with(canon_root) {
+                return Ok(target);
             }
         }
     }
@@ -373,13 +389,15 @@ fn collect_files_recursive(dir: &Path, ignored: &[String], files: &mut Vec<PathB
         if ignored.iter().any(|p| p == &name) { continue; }
         // Hide internal swap/temp files
         if name.ends_with(".volt-swap") || name.ends_with(".volt-tmp") { continue; }
-        let path = entry.path();
-        if path.is_dir() {
+        // Use file_type() instead of path.is_dir() — avoids an extra stat syscall
+        // per entry (file_type is free on most filesystems via readdir d_type)
+        let is_dir = entry.file_type().is_ok_and(|ft| ft.is_dir());
+        if is_dir {
             // Skip hidden directories (e.g. .git, .vscode) but not hidden files
             if name.starts_with('.') { continue; }
-            collect_files_recursive(&path, ignored, files, depth + 1)?;
+            collect_files_recursive(&entry.path(), ignored, files, depth + 1)?;
         } else {
-            files.push(path);
+            files.push(entry.path());
         }
     }
     Ok(())
@@ -472,44 +490,87 @@ fn search_in_files_inner(
     let mut full_paths = Vec::new();
     collect_files_recursive(root, &ignored_patterns, &mut full_paths, 0)?;
 
-    let query_lower: Vec<u8> = query.bytes().map(|b| b.to_ascii_lowercase()).collect();
-    let mut results = Vec::new();
-
-    for file_path in &full_paths {
-        if results.len() >= 200 { break; }
-        let metadata = match fs::metadata(file_path) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if metadata.len() > 1024 * 1024 { continue; }
-
-        let bytes = match fs::read(file_path) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-        if is_binary(&bytes) { continue; }
-
-        let content = String::from_utf8_lossy(&bytes);
-        let file_name = file_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let path_str = file_path.to_string_lossy().to_string();
-
-        for (i, line) in content.lines().enumerate() {
-            if results.len() >= 200 { break; }
-            if let Some(col) = find_ascii_case_insensitive(line.as_bytes(), &query_lower) {
-                results.push(SearchMatch {
-                    path: path_str.clone(),
-                    file_name: file_name.clone(),
-                    line_number: i + 1,
-                    line_content: line.chars().take(200).collect(),
-                    column: col + 1,
-                });
-            }
-        }
+    if full_paths.is_empty() {
+        return Ok(Vec::new());
     }
 
+    let query_lower: Vec<u8> = query.bytes().map(|b| b.to_ascii_lowercase()).collect();
+    let max_results: usize = 200;
+    let total_found = std::sync::atomic::AtomicUsize::new(0);
+    let num_threads = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .min(8);
+    let chunk_size = full_paths.len().div_ceil(num_threads);
+
+    let mut results = Vec::new();
+
+    std::thread::scope(|s| {
+        let handles: Vec<_> = full_paths
+            .chunks(chunk_size)
+            .map(|chunk| {
+                let query_lower = &query_lower;
+                let total_found = &total_found;
+                s.spawn(move || {
+                    let mut local_results = Vec::new();
+                    for file_path in chunk {
+                        if total_found.load(std::sync::atomic::Ordering::Relaxed) >= max_results {
+                            break;
+                        }
+                        let metadata = match fs::metadata(file_path) {
+                            Ok(m) => m,
+                            Err(_) => continue,
+                        };
+                        if metadata.len() > 1024 * 1024 {
+                            continue;
+                        }
+
+                        let bytes = match fs::read(file_path) {
+                            Ok(b) => b,
+                            Err(_) => continue,
+                        };
+                        if is_binary(&bytes) {
+                            continue;
+                        }
+
+                        let content = String::from_utf8_lossy(&bytes);
+                        let file_name = file_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let path_str = file_path.to_string_lossy().to_string();
+
+                        for (i, line) in content.lines().enumerate() {
+                            if total_found.load(std::sync::atomic::Ordering::Relaxed) >= max_results
+                            {
+                                break;
+                            }
+                            if let Some(col) =
+                                find_ascii_case_insensitive(line.as_bytes(), query_lower)
+                            {
+                                local_results.push(SearchMatch {
+                                    path: path_str.clone(),
+                                    file_name: file_name.clone(),
+                                    line_number: i + 1,
+                                    line_content: line.chars().take(200).collect(),
+                                    column: col + 1,
+                                });
+                                total_found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    local_results
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            if let Ok(local) = handle.join() {
+                results.extend(local);
+            }
+        }
+    });
+
+    results.truncate(max_results);
     Ok(results)
 }
 

@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentFolder } from './app.js';
 import { resolveFileIcon } from './file-tree.js';
+import { setEditorFontSize } from './editor.js';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -31,9 +32,7 @@ export function setTerminalConfig(cfg) {
       if (cfg.scrollback) tab.terminal.options.scrollback = cfg.scrollback;
       requestAnimationFrame(() => fitTerminal(tab));
     } else if (tab.type === 'file' && cfg.fontSize && tab.editorView) {
-      import('./editor.js').then(({ setEditorFontSize }) => {
-        setEditorFontSize(tab.editorView, cfg.fontSize);
-      });
+      setEditorFontSize(tab.editorView, cfg.fontSize);
     }
   }
 }
