@@ -57,7 +57,8 @@ async function doSearch() {
       ignored: currentIgnored,
     });
     renderResults(results, query);
-  } catch {
+  } catch (e) {
+    console.warn('Search failed:', e);
     statusEl.textContent = 'Search failed';
   }
 }

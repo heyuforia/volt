@@ -234,7 +234,7 @@ export async function createTerminalTab() {
     // from keydown), which would send an extra \r via onData.
     if (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === 'Enter') {
       e.preventDefault();
-      invoke('write_terminal', { id: ptyId, data: '\x1b\n' }).catch(() => {});
+      invoke('write_terminal', { id: ptyId, data: '\x1b\n' }).catch(e => console.warn('Failed to write terminal:', e));
       return false;
     }
 
@@ -265,7 +265,7 @@ export async function createTerminalTab() {
       } else {
         seq = '\x1b\x7f';
       }
-      invoke('write_terminal', { id: ptyId, data: seq }).catch(() => {});
+      invoke('write_terminal', { id: ptyId, data: seq }).catch(e => console.warn('Failed to write terminal:', e));
       return false;
     }
 
@@ -273,8 +273,8 @@ export async function createTerminalTab() {
     if (e.ctrlKey && !e.shiftKey && e.key === 'v') {
       e.preventDefault(); // block browser paste event (xterm listens for it too)
       navigator.clipboard.readText().then((text) => {
-        if (text) invoke('write_terminal', { id: ptyId, data: text }).catch(() => {});
-      }).catch(() => {});
+        if (text) invoke('write_terminal', { id: ptyId, data: text }).catch(e => console.warn('Failed to write terminal:', e));
+      }).catch(e => console.warn('Failed to read clipboard:', e));
       return false;
     }
 
@@ -511,7 +511,7 @@ async function closeTab(tabId) {
     if (!tab.exited) {
       try {
         await invoke('kill_terminal', { id: tab.ptyId });
-      } catch { /* already dead */ }
+      } catch (e) { console.warn('Failed to kill terminal:', e); }
     }
     ptyToTab.delete(tab.ptyId);
     tab.terminal.dispose();
@@ -573,7 +573,7 @@ export async function closeAllTabs() {
   for (const tab of tabs) {
     if (tab.type === 'terminal') {
       if (!tab.exited) {
-        try { await invoke('kill_terminal', { id: tab.ptyId }); } catch {}
+        try { await invoke('kill_terminal', { id: tab.ptyId }); } catch (e) { console.warn('Failed to kill terminal:', e); }
       }
       ptyToTab.delete(tab.ptyId);
       tab.terminal.dispose();

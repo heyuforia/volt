@@ -76,7 +76,8 @@ async function refreshEmulators() {
   try {
     emulators = await invoke('list_emulators');
     fetched = true;
-  } catch {
+  } catch (e) {
+    console.warn('Failed to list emulators:', e);
     emulators = [];
   }
 }
@@ -149,7 +150,7 @@ function renderDropdown() {
       try {
         await invoke('launch_emulator', { id, cold });
         if (emu) emulatorBtn.textContent = emu.name;
-      } catch { /* launch failed */ }
+      } catch (e) { console.warn('Failed to launch emulator:', e); }
       hideDropdown();
     });
   });

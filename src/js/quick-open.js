@@ -30,7 +30,8 @@ export function initQuickOpen(openCallback) {
 export async function showQuickOpen(projectPath, ignored) {
   try {
     allFiles = await invoke('list_all_files', { path: projectPath, ignored });
-  } catch {
+  } catch (e) {
+    console.warn('Failed to list files:', e);
     allFiles = [];
   }
 

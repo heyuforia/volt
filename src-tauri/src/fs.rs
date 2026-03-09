@@ -98,8 +98,8 @@ pub fn read_directory(path: String, ignored: Option<Vec<String>>) -> Result<Vec<
         if ignored_patterns.iter().any(|p| p == &name) {
             continue;
         }
-        // Hide internal swap files from the file tree
-        if name.ends_with(".volt-swap") {
+        // Hide internal swap/temp files from the file tree
+        if name.ends_with(".volt-swap") || name.ends_with(".volt-tmp") {
             continue;
         }
 
@@ -253,9 +253,28 @@ pub fn read_image_file(path: String) -> Result<ImageContent, String> {
     Ok(ImageContent { data, mime, file_name, size })
 }
 
+/// Write content to a file atomically: write to a temp file in the same
+/// directory, then rename over the original.  This prevents data loss if
+/// the process crashes (or Windows bluescreens) mid-write.
+pub(crate) fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
+    let temp = path.with_file_name(format!(
+        ".{}.volt-tmp",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+
+    fs::write(&temp, content)
+        .map_err(|e| format!("Failed to write temp file: {}", e))?;
+
+    fs::rename(&temp, path).map_err(|e| {
+        // Clean up temp file on rename failure
+        let _ = fs::remove_file(&temp);
+        format!("Failed to finalize write: {}", e)
+    })
+}
+
 #[tauri::command]
 pub fn save_file(path: String, content: String) -> Result<(), String> {
-    fs::write(&path, &content).map_err(|e| format!("Failed to save file: {}", e))
+    atomic_write(Path::new(&path), content.as_bytes())
 }
 
 // ── Swap files (crash recovery) ──

@@ -111,7 +111,7 @@ export function initAnalyzer(initialHeight, heightChangeCallback) {
       lastCrashTime = now;
       try {
         await startAnalyzer(folder);
-      } catch { /* restart failed */ }
+      } catch (e) { console.warn('Failed to restart analyzer:', e); }
     } else {
       updateStatusBar();
     }
@@ -158,7 +158,7 @@ async function restartAnalyzer(folder) {
   analyzerRunning = false;
   try {
     await invoke('stop_analyzer');
-  } catch { /* already stopped */ }
+  } catch (e) { console.warn('Failed to stop analyzer:', e); }
   diagnosticsMap = {};
   cachedDiagnostics = null;
   await startAnalyzer(folder);
@@ -167,7 +167,7 @@ async function restartAnalyzer(folder) {
 export async function stopAnalyzer() {
   try {
     await invoke('stop_analyzer');
-  } catch { /* already stopped */ }
+  } catch (e) { console.warn('Failed to stop analyzer:', e); }
   analyzerRunning = false;
   diagnosticsMap = {};
   cachedDiagnostics = null;

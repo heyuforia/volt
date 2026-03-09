@@ -213,7 +213,6 @@ pub fn save_config(mut config: VoltConfig) -> Result<(), String> {
 
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    fs::write(config_path(), content)
-        .map_err(|e| format!("Failed to write config: {}", e))?;
+    crate::fs::atomic_write(&config_path(), content.as_bytes())?;
     Ok(())
 }

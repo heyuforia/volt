@@ -26,7 +26,8 @@ async function updateStats() {
     const ram = Math.round(stats.ram_mb);
     const cpu = Math.round(stats.cpu_percent);
     statusResources.textContent = `RAM: ${ram} MB | CPU: ${cpu}%`;
-  } catch {
+  } catch (e) {
+    console.warn('Failed to fetch system stats:', e);
     statusResources.textContent = 'RAM: \u2014 | CPU: \u2014';
   }
 }

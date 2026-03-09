@@ -77,7 +77,8 @@ export async function loadDirectory(path) {
   const gitPromise = invoke('git_status', { path }).then(result => {
     gitStatusMap = result.files;
     gitRoot = result.root;
-  }).catch(() => {
+  }).catch(e => {
+    console.warn('Failed to fetch git status:', e);
     gitStatusMap = {};
     gitRoot = null;
   });
@@ -106,7 +107,8 @@ export async function refreshGitStatus() {
     const result = await invoke('git_status', { path: rootPath });
     gitStatusMap = result.files;
     gitRoot = result.root;
-  } catch {
+  } catch (e) {
+    console.warn('Failed to refresh git status:', e);
     gitStatusMap = {};
     gitRoot = null;
   }
@@ -263,7 +265,8 @@ function renderEntries(container, entries, depth) {
               const subEntries = await invoke('read_directory', { path: entry.path, ignored });
               renderEntries(children, subEntries, depth + 1);
               children.dataset.loaded = 'true';
-            } catch {
+            } catch (e) {
+              console.warn('Failed to load subdirectory:', e);
               children.innerHTML = `<div style="padding:4px 8px;color:#7a7a8a;font-size:12px;">Error loading</div>`;
             }
           }

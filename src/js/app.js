@@ -43,7 +43,8 @@ const statusProjectType = document.getElementById('status-project-type');
 async function loadConfig() {
   try {
     config = await invoke('load_config');
-  } catch {
+  } catch (e) {
+    console.warn('Failed to load config:', e);
     config = { recentFolders: [], lastFolder: null };
   }
   return config;
@@ -61,7 +62,7 @@ async function saveLastFolder(path) {
     config.recentFolders = config.recentFolders.slice(0, 5);
 
     await invoke('save_config', { config });
-  } catch { /* config save failed, non-fatal */ }
+  } catch (e) { console.warn('Failed to save last folder:', e); }
 }
 
 // ── Open folder ──
@@ -87,7 +88,7 @@ async function openFolder(path) {
   try {
     const alreadyOpen = await invoke('check_folder_instance', { folder: path });
     if (alreadyOpen) return; // Other instance was focused
-  } catch { /* check failed, proceed */ }
+  } catch (e) { console.warn('Failed to check folder instance:', e); }
 
   // Save tab state for current folder before switching
   saveTabState();
@@ -96,7 +97,7 @@ async function openFolder(path) {
   await closeAllTabs();
 
   // Release previous folder lock before switching
-  try { await invoke('release_folder_lock'); } catch {}
+  try { await invoke('release_folder_lock'); } catch (e) { console.warn('Failed to release folder lock:', e); }
 
   currentFolder = path;
   await saveLastFolder(path);
@@ -117,7 +118,7 @@ async function openFolder(path) {
   try {
     const folderName = path.split(/[\\/]/).pop();
     await getCurrentWindow().setTitle(`Volt \u2014 ${folderName}`);
-  } catch { /* setTitle permission may not be available */ }
+  } catch (e) { console.warn('Failed to set window title:', e); }
 
   // Load file tree
   await loadDirectory(path);
@@ -134,14 +135,14 @@ async function openFolder(path) {
       statusProjectType.classList.add('hidden');
       hideEmulatorButton();
     }
-  } catch { /* detection failed, non-fatal */ }
+  } catch (e) { console.warn('Failed to detect project type:', e); }
 
   // Start LSP for any supported language (auto-detected by Rust)
   await stopAnalyzer();
   await startAnalyzer(path);
 
   // Acquire per-folder lock so other Volt instances know this folder is open
-  try { await invoke('acquire_folder_lock', { folder: path }); } catch { /* non-fatal */ }
+  try { await invoke('acquire_folder_lock', { folder: path }); } catch (e) { console.warn('Failed to acquire folder lock:', e); }
 
   // Restore previously open file tabs for this folder
   await restoreTabState(path);
@@ -172,10 +173,10 @@ async function closeFolder() {
   await closeAllTabs();
 
   // Release folder lock
-  try { await invoke('release_folder_lock'); } catch {}
+  try { await invoke('release_folder_lock'); } catch (e) { console.warn('Failed to release folder lock:', e); }
 
   // Stop watching all files
-  invoke('unwatch_all_files').catch(() => {});
+  invoke('unwatch_all_files').catch(e => console.warn('Failed to unwatch files:', e));
 
   // Stop analyzer
   await stopAnalyzer();
@@ -184,10 +185,10 @@ async function closeFolder() {
   currentFolder = null;
   if (!config) config = {};
   config.lastFolder = null;
-  try { await invoke('save_config', { config }); } catch {}
+  try { await invoke('save_config', { config }); } catch (e) { console.warn('Failed to save config:', e); }
 
   // Reset window title
-  try { await getCurrentWindow().setTitle('Volt'); } catch {}
+  try { await getCurrentWindow().setTitle('Volt'); } catch (e) { console.warn('Failed to reset window title:', e); }
 
   // Return to welcome state
   welcomeHint.classList.remove('hidden');
@@ -269,12 +270,12 @@ async function initCloseWarning() {
         }
 
         // Release per-folder lock so other instances can open this folder
-        try { await invoke('release_folder_lock'); } catch {}
-      } catch {
-        // Never block window close due to an error
+        try { await invoke('release_folder_lock'); } catch (e) { console.warn('Failed to release folder lock:', e); }
+      } catch (e) {
+        console.warn('Close handler error:', e);
       }
     });
-  } catch { /* permission not available, skip close warning */ }
+  } catch (e) { console.warn('Failed to init close warning:', e); }
 }
 
 // ── Keyboard shortcuts ──
@@ -283,7 +284,7 @@ function changeFontSize(delta) {
   const newSize = Math.max(8, Math.min(32, (config.terminal.fontSize || 14) + delta));
   config.terminal.fontSize = newSize;
   setTerminalConfig(config.terminal);
-  invoke('save_config', { config }).catch(() => {});
+  invoke('save_config', { config }).catch(e => console.warn('Failed to save config:', e));
 }
 
 function initKeyboardShortcuts() {
@@ -331,7 +332,7 @@ function initKeyboardShortcuts() {
       if (config?.terminal) {
         config.terminal.fontSize = 14;
         setTerminalConfig(config.terminal);
-        invoke('save_config', { config }).catch(() => {});
+        invoke('save_config', { config }).catch(e => console.warn('Failed to save config:', e));
       }
     }
   });
@@ -359,7 +360,7 @@ async function applyWindowState() {
       sidebarVisible = false;
       sidebar.classList.add('collapsed');
     }
-  } catch { /* window state restore failed, non-fatal */ }
+  } catch (e) { console.warn('Failed to restore window state:', e); }
 }
 
 async function saveWindowState() {
@@ -388,7 +389,7 @@ async function saveWindowState() {
       sidebarVisible: sidebarVisible,
     };
     await invoke('save_config', { config });
-  } catch { /* save failed, non-fatal */ }
+  } catch (e) { console.warn('Failed to save window state:', e); }
 }
 
 // ── Drag and drop ──
@@ -431,8 +432,8 @@ function initDragDrop() {
           }
         }
       });
-    }).catch(() => { /* drag-drop not available */ });
-  } catch { /* import failed */ }
+    }).catch(e => console.warn('Drag-drop setup failed:', e));
+  } catch (e) { console.warn('Drag-drop import failed:', e); }
 }
 
 // ── File editor ──
@@ -481,7 +482,7 @@ async function saveActiveFile(tab) {
     autoSaveTimers.delete(tab.filePath);
     clearTimeout(swapWriteTimers.get(tab.filePath));
     swapWriteTimers.delete(tab.filePath);
-    invoke('delete_swap_file', { path: tab.filePath }).catch(() => {});
+    invoke('delete_swap_file', { path: tab.filePath }).catch(e => console.warn('Failed to delete swap file:', e));
     // Refresh git status indicators after save
     refreshGitStatus();
   } catch (err) {
@@ -499,7 +500,7 @@ function scheduleAutoSave(tab) {
       invoke('write_swap_file', {
         path: tab.filePath,
         content: getEditorContent(tab.editorView),
-      }).catch(() => {});
+      }).catch(e => console.warn('Failed to write swap file:', e));
     }
   }, 500));
 
@@ -533,17 +534,17 @@ function handleFileRenamed(oldPath, newPath, newName, isDir) {
       const oldFilePath = tab.filePath;
       const newFilePath = newPath + tab.filePath.slice(oldPath.length);
       updateFileTabPath(oldFilePath, newFilePath, tab.name);
-      invoke('unwatch_file', { path: oldFilePath }).catch(() => {});
-      invoke('watch_file', { path: newFilePath }).catch(() => {});
-      invoke('delete_swap_file', { path: oldFilePath }).catch(() => {});
+      invoke('unwatch_file', { path: oldFilePath }).catch(e => console.warn('Failed to unwatch file:', e));
+      invoke('watch_file', { path: newFilePath }).catch(e => console.warn('Failed to watch file:', e));
+      invoke('delete_swap_file', { path: oldFilePath }).catch(e => console.warn('Failed to delete swap file:', e));
       migrateTimerKeys(oldFilePath, newFilePath);
     }
   } else {
     const tab = updateFileTabPath(oldPath, newPath, newName);
     if (tab) {
-      invoke('unwatch_file', { path: oldPath }).catch(() => {});
-      invoke('watch_file', { path: newPath }).catch(() => {});
-      invoke('delete_swap_file', { path: oldPath }).catch(() => {});
+      invoke('unwatch_file', { path: oldPath }).catch(e => console.warn('Failed to unwatch file:', e));
+      invoke('watch_file', { path: newPath }).catch(e => console.warn('Failed to watch file:', e));
+      invoke('delete_swap_file', { path: oldPath }).catch(e => console.warn('Failed to delete swap file:', e));
       migrateTimerKeys(oldPath, newPath);
     }
   }
@@ -587,7 +588,8 @@ async function openFile(entry, targetLine) {
   let fileData;
   try {
     fileData = await invoke('read_file', { path: entry.path });
-  } catch {
+  } catch (e) {
+    console.warn('Failed to read file:', e);
     openingFiles.delete(entry.path);
     return;
   }
@@ -605,10 +607,10 @@ async function openFile(entry, targetLine) {
       if (recover) {
         recoveredContent = swapContent;
       } else {
-        invoke('delete_swap_file', { path: entry.path }).catch(() => {});
+        invoke('delete_swap_file', { path: entry.path }).catch(e => console.warn('Failed to delete swap file:', e));
       }
     }
-  } catch { /* no swap file or read error — continue normally */ }
+  } catch (e) { console.warn('Failed to check swap file:', e); }
 
   fileTabCounter++;
   const tabId = `file-${fileTabCounter}`;
@@ -652,7 +654,8 @@ async function openFile(entry, targetLine) {
       onModified,
       onCursorChange
     );
-  } catch {
+  } catch (e) {
+    console.warn('Failed to create editor view:', e);
     wrapper.remove();
     openingFiles.delete(entry.path);
     return;
@@ -674,7 +677,7 @@ async function openFile(entry, targetLine) {
   if (targetLine && view) goToLine(view, targetLine);
 
   // Start watching for external changes
-  invoke('watch_file', { path: entry.path }).catch(() => {});
+  invoke('watch_file', { path: entry.path }).catch(e => console.warn('Failed to watch file:', e));
 }
 
 async function openImageFile(entry) {
@@ -832,7 +835,7 @@ function saveTabState() {
     activeIndex: activeIndex >= 0 ? activeIndex : null,
   };
 
-  invoke('save_config', { config }).catch(() => {});
+  invoke('save_config', { config }).catch(e => console.warn('Failed to save tab state:', e));
 }
 
 async function restoreTabState(folderPath) {
@@ -883,7 +886,7 @@ function renderRecents() {
   clearBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     config.recentFolders = [];
-    try { await invoke('save_config', { config }); } catch {}
+    try { await invoke('save_config', { config }); } catch (e) { console.warn('Failed to save config:', e); }
     renderRecents();
   });
   header.appendChild(clearBtn);
@@ -920,7 +923,7 @@ async function init() {
   initAnalyzer(config?.diagnosticsPanelHeight, (height) => {
     if (!config) config = {};
     config.diagnosticsPanelHeight = height;
-    invoke('save_config', { config }).catch(() => {});
+    invoke('save_config', { config }).catch(e => console.warn('Failed to save config:', e));
   });
   initEmulator();
   if (config?.terminal) setTerminalConfig(config.terminal);
@@ -967,8 +970,8 @@ async function init() {
   // Unwatch file when its tab is closed
   setTabCloseCallback((tab) => {
     if (tab.type === 'file' && tab.filePath) {
-      invoke('unwatch_file', { path: tab.filePath }).catch(() => {});
-      invoke('delete_swap_file', { path: tab.filePath }).catch(() => {});
+      invoke('unwatch_file', { path: tab.filePath }).catch(e => console.warn('Failed to unwatch file:', e));
+      invoke('delete_swap_file', { path: tab.filePath }).catch(e => console.warn('Failed to delete swap file:', e));
       clearTimeout(autoSaveTimers.get(tab.filePath));
       autoSaveTimers.delete(tab.filePath);
       clearTimeout(swapWriteTimers.get(tab.filePath));
@@ -997,7 +1000,7 @@ async function init() {
       if (fileData.content !== currentContent) {
         replaceEditorContent(tab.editorView, fileData.content);
       }
-    } catch { /* file may have been deleted or become unreadable */ }
+    } catch (e) { console.warn('Failed to reload changed file:', e); }
   });
 
   // Breadcrumb + cursor position updates on tab switch
@@ -1067,7 +1070,7 @@ async function init() {
   if (config && config.lastFolder) {
     try {
       await openFolder(config.lastFolder);
-    } catch { /* folder may not exist */ }
+    } catch (e) { console.warn('Failed to reopen last folder:', e); }
   }
 
   // Save window state on resize/move (debounced, only when changed)
