@@ -53,8 +53,18 @@ VSCode/VSCodium uses 300–800 MB of RAM by bundling Chromium and running hundre
 Grab the latest release from the [Releases](https://github.com/heyuforia/volt/releases) page:
 
 - **Windows** — `.exe` (portable) or `.msi` (installer)
-- **macOS** — `.dmg`
+- **macOS** — `.dmg` (see note below)
 - **Linux** — `.deb` or `.AppImage`
+
+#### macOS: "App is damaged" fix
+
+macOS blocks apps that aren't signed with an Apple Developer certificate. After installing, if you see _"Volt.app is damaged and can't be opened"_, run this in Terminal:
+
+```bash
+xattr -cr /Applications/Volt.app
+```
+
+Then open Volt normally. This only needs to be done once.
 
 ### Build from source
 
