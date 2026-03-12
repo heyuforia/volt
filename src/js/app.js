@@ -199,6 +199,9 @@ async function closeFolder() {
   invoke('unwatch_all_files').catch(e => console.warn('Failed to unwatch files:', e));
   invoke('unwatch_directory').catch(e => console.warn('Failed to unwatch directory:', e));
 
+  // Clear save cooldowns so file-changed events aren't ignored in the next folder
+  saveCooldowns.clear();
+
   // Stop analyzer
   await stopAnalyzer();
 

@@ -385,6 +385,7 @@ function initTabDrag(tabEl, tab) {
 }
 
 function renderTabs() {
+  const scrollLeft = tabList.scrollLeft;
   tabList.innerHTML = '';
   if (tabs.length === 0) {
     showEmptyState();
@@ -466,7 +467,8 @@ function renderTabs() {
     initTabDrag(tabEl, tab);
   }
 
-  // Detect overflow for scroll fade
+  // Restore tab bar scroll position and detect overflow
+  tabList.scrollLeft = scrollLeft;
   requestAnimationFrame(() => {
     tabList.classList.toggle('overflowing', tabList.scrollWidth > tabList.clientWidth);
   });

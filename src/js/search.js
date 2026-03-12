@@ -9,6 +9,7 @@ let onOpenResult = null;
 let searchTimeout = null;
 let currentProject = null;
 let currentIgnored = null;
+let searchGeneration = 0;
 
 export function initSearch(openCallback) {
   onOpenResult = openCallback;
@@ -49,15 +50,19 @@ async function doSearch() {
   }
 
   statusEl.textContent = 'Searching...';
+  resultsEl.innerHTML = '';
 
+  const thisGen = ++searchGeneration;
   try {
     const results = await invoke('search_in_files', {
       path: currentProject,
       query,
       ignored: currentIgnored,
     });
+    if (thisGen !== searchGeneration) return; // Superseded by newer search
     renderResults(results, query);
   } catch (e) {
+    if (thisGen !== searchGeneration) return;
     console.warn('Search failed:', e);
     statusEl.textContent = 'Search failed';
   }

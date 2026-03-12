@@ -217,6 +217,7 @@ function openSettings(getConfig, onConfigChanged) {
 }
 
 function showSaveError(panel, message) {
+  if (!panel) return;
   let errEl = panel.querySelector('.settings-save-error');
   if (!errEl) {
     errEl = document.createElement('span');
