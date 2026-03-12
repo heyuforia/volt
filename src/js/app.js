@@ -865,14 +865,25 @@ function toggleMarkdownPreview() {
       ALLOW_DATA_ATTR: false,
     });
 
-    // Hide editor, show preview
+    // Save editor scroll position before hiding
     const cmEl = tab.wrapper.querySelector('.cm-editor');
-    if (cmEl) cmEl.style.display = 'none';
+    if (cmEl) {
+      tab._savedScrollTop = tab.editorView.scrollDOM.scrollTop;
+      cmEl.style.display = 'none';
+    }
     preview.classList.add('active');
   } else {
     // Show editor, hide preview
     const cmEl = tab.wrapper.querySelector('.cm-editor');
-    if (cmEl) cmEl.style.display = '';
+    if (cmEl) {
+      cmEl.style.display = '';
+      // Restore editor scroll position after unhiding
+      if (tab._savedScrollTop != null) {
+        requestAnimationFrame(() => {
+          tab.editorView.scrollDOM.scrollTop = tab._savedScrollTop;
+        });
+      }
+    }
     const preview = tab.wrapper.querySelector('.md-preview');
     if (preview) preview.classList.remove('active');
   }
@@ -1111,7 +1122,14 @@ async function init() {
           if (cmEl) cmEl.style.display = 'none';
           if (preview) preview.classList.add('active');
         } else {
-          if (cmEl) cmEl.style.display = '';
+          if (cmEl) {
+            cmEl.style.display = '';
+            if (tab._savedScrollTop != null) {
+              requestAnimationFrame(() => {
+                tab.editorView.scrollDOM.scrollTop = tab._savedScrollTop;
+              });
+            }
+          }
           if (preview) preview.classList.remove('active');
         }
       }
