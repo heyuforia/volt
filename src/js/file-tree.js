@@ -68,8 +68,76 @@ export function initFileTree() {
   });
 }
 
-export async function loadDirectory(path) {
+/// Collect paths of all currently expanded folders in the tree.
+function getExpandedPaths() {
+  const expanded = new Set();
+  fileTreeEl.querySelectorAll('.tree-item[data-is-dir="true"]').forEach(item => {
+    const chevron = item.querySelector('.tree-chevron');
+    if (chevron && chevron.classList.contains('expanded')) {
+      expanded.add(item.dataset.path);
+    }
+  });
+  return expanded;
+}
+
+/// After rendering, re-expand folders that were previously open.
+async function restoreExpandedPaths(expandedSet) {
+  if (!expandedSet || expandedSet.size === 0) return;
+
+  // Find all folder tree-items that should be expanded
+  const items = fileTreeEl.querySelectorAll('.tree-item[data-is-dir="true"]');
+  for (const item of items) {
+    if (!expandedSet.has(item.dataset.path)) continue;
+
+    const chevron = item.querySelector('.tree-chevron');
+    const folderImg = item.querySelector('.tree-icon-img');
+    const folderName = folderImg?.dataset.folderName || '';
+    // The children container is the next sibling element
+    const children = item.nextElementSibling;
+    if (!chevron || !children || !children.classList.contains('tree-children')) continue;
+
+    chevron.classList.add('expanded');
+    chevron.textContent = '▾';
+    children.classList.add('expanded');
+    if (folderImg) folderImg.src = resolveFolderIcon(folderName, true);
+
+    // Load children if not yet loaded
+    if (children.dataset.loaded === 'false') {
+      try {
+        const ignored = ignoredPatterns || undefined;
+        const subEntries = await invoke('read_directory', { path: item.dataset.path, ignored });
+        const depth = (parseInt(item.style.paddingLeft) - 8) / 16;
+        renderEntries(children, subEntries, depth + 1);
+        children.dataset.loaded = 'true';
+      } catch (e) {
+        console.warn('Failed to reload expanded directory:', e);
+      }
+    }
+  }
+
+  // Recurse: after loading first-level expanded dirs, their children are now
+  // in the DOM and may also need expanding (nested expanded folders).
+  const stillNeeded = new Set();
+  const allDirItems = fileTreeEl.querySelectorAll('.tree-item[data-is-dir="true"]');
+  for (const item of allDirItems) {
+    if (!expandedSet.has(item.dataset.path)) continue;
+    const ch = item.querySelector('.tree-chevron');
+    if (!ch || !ch.classList.contains('expanded')) stillNeeded.add(item.dataset.path);
+  }
+  if (stillNeeded.size > 0) {
+    await restoreExpandedPaths(stillNeeded);
+  }
+}
+
+export async function loadDirectory(path, preserveState = false) {
   rootPath = path;
+
+  // Save expanded state before clearing
+  const expandedPaths = preserveState ? getExpandedPaths() : null;
+
+  // Save scroll position
+  const scrollTop = fileTreeEl.scrollTop;
+
   fileTreeEl.innerHTML = '';
 
   // Increment generation so any in-flight call becomes stale
@@ -99,10 +167,22 @@ export async function loadDirectory(path) {
     if (thisGen !== loadGeneration) return;
 
     renderEntries(fileTreeEl, entries, 0);
+
+    // Restore expanded folders and scroll position
+    if (expandedPaths && expandedPaths.size > 0) {
+      await restoreExpandedPaths(expandedPaths);
+    }
+    fileTreeEl.scrollTop = scrollTop;
   } catch (err) {
     if (thisGen !== loadGeneration) return;
     fileTreeEl.innerHTML = `<div style="padding:12px;color:#7a7a8a;">Failed to read directory</div>`;
   }
+}
+
+/// Refresh the tree while preserving expanded folder state and scroll position.
+export async function refreshTree() {
+  if (!rootPath) return;
+  await loadDirectory(rootPath, true);
 }
 
 export async function refreshGitStatus() {
@@ -384,7 +464,7 @@ function showUndoToast(oldPath, newPath, oldName, newName, isDir) {
     try {
       await invoke('rename_path', { oldPath: newPath, newPath: oldPath });
       if (onFileRenamed) onFileRenamed(newPath, oldPath, oldName, isDir);
-      await loadDirectory(rootPath);
+      await refreshTree();
     } catch (err) {
       console.error('Undo rename failed:', err);
     }
@@ -448,7 +528,7 @@ function showContextMenu(e, entry) {
     if (!name) return;
     try {
       await invoke('create_file', { path: parentDir + sep + name });
-      await loadDirectory(rootPath);
+      await refreshTree();
       if (onFileClick) onFileClick({ path: parentDir + sep + name, name, is_dir: false });
     } catch (err) { console.error(err); }
   });
@@ -457,7 +537,7 @@ function showContextMenu(e, entry) {
     if (!name) return;
     try {
       await invoke('create_directory', { path: parentDir + sep + name });
-      await loadDirectory(rootPath);
+      await refreshTree();
     } catch (err) { console.error(err); }
   });
 
@@ -473,7 +553,7 @@ function showContextMenu(e, entry) {
       try {
         await invoke('rename_path', { oldPath: entry.path, newPath });
         if (onFileRenamed) onFileRenamed(entry.path, newPath, newName, entry.is_dir);
-        await loadDirectory(rootPath);
+        await refreshTree();
         showUndoToast(entry.path, newPath, entry.name, newName, entry.is_dir);
       } catch (err) { console.error(err); }
     });
@@ -489,7 +569,7 @@ function showContextMenu(e, entry) {
       try {
         await invoke('delete_path', { path: entry.path });
         if (onFileDeleted) onFileDeleted(entry.path, entry.is_dir);
-        await loadDirectory(rootPath);
+        await refreshTree();
       } catch (err) { console.error(err); }
     });
 

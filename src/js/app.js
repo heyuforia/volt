@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
-import { initFileTree, loadDirectory, setIgnoredPatterns, setFileClickHandler, setFileRenamedHandler, setFileDeletedHandler, refreshGitStatus } from './file-tree.js';
+import { initFileTree, loadDirectory, refreshTree, setIgnoredPatterns, setFileClickHandler, setFileRenamedHandler, setFileDeletedHandler, refreshGitStatus } from './file-tree.js';
 import { initTerminals, createTerminalTab, getActiveTerminalCount, setTerminalConfig, addFileTab, findTabByFilePath, getActiveTab, getUnsavedFileTabs, getAllTabs, closeAllTabs, setActivationCallback, getTerminalConfig, renderTabs, activateTab, setTabCloseCallback, updateFileTabPath, getFileTabsByPathPrefix, forceCloseFileTab } from './terminal.js';
 import { createEditorView, getEditorContent, markClean, replaceEditorContent, goToLine } from './editor.js';
 import { marked } from 'marked';
@@ -143,6 +143,9 @@ async function openFolder(path) {
   // Load file tree
   await loadDirectory(path);
 
+  // Watch project directory for structural changes (new/deleted/renamed files)
+  invoke('watch_directory', { path }).catch(e => console.warn('Failed to watch directory:', e));
+
   // Project type detection (drives tooling like emulators, status badge)
   try {
     projectType = await invoke('detect_project_type', { path });
@@ -192,8 +195,9 @@ async function closeFolder() {
   // Release folder lock
   try { await invoke('release_folder_lock'); } catch (e) { console.warn('Failed to release folder lock:', e); }
 
-  // Stop watching all files
+  // Stop watching all files and directory
   invoke('unwatch_all_files').catch(e => console.warn('Failed to unwatch files:', e));
+  invoke('unwatch_directory').catch(e => console.warn('Failed to unwatch directory:', e));
 
   // Stop analyzer
   await stopAnalyzer();
@@ -1097,6 +1101,17 @@ async function init() {
     } catch (e) { console.warn('Failed to reload changed file:', e); }
   });
 
+  // Listen for directory structure changes (new/deleted/renamed files) and refresh tree
+  let dirChangeTimer = null;
+  await listen('directory-changed', () => {
+    // Debounce: batch rapid filesystem events into a single refresh
+    if (dirChangeTimer) clearTimeout(dirChangeTimer);
+    dirChangeTimer = setTimeout(() => {
+      dirChangeTimer = null;
+      if (currentFolder) refreshTree();
+    }, 300);
+  });
+
   // Breadcrumb + cursor position updates on tab switch
   setActivationCallback((tab) => {
     if (tab?.type === 'file') {
@@ -1147,7 +1162,7 @@ async function init() {
   document.getElementById('btn-open-folder-large').addEventListener('click', () => openFolder());
   document.getElementById('btn-open-folder-welcome').addEventListener('click', () => openFolder());
   document.getElementById('btn-refresh-tree').addEventListener('click', () => {
-    if (currentFolder) loadDirectory(currentFolder); // loadDirectory fetches git status internally
+    if (currentFolder) refreshTree();
   });
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
   document.getElementById('sidebar-title').addEventListener('click', closeFolder);

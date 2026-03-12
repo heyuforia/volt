@@ -26,8 +26,11 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let state = watcher::FileWatcherState::new(app.handle().clone());
-            app.manage(std::sync::Mutex::new(state));
+            let file_watcher = watcher::FileWatcherState::new(app.handle().clone());
+            app.manage(std::sync::Mutex::new(file_watcher));
+
+            let dir_watcher = watcher::DirWatcherState::new(app.handle().clone());
+            app.manage(std::sync::Mutex::new(dir_watcher));
 
             // Disable WebView2 browser accelerator keys (Ctrl+Tab, etc.)
             // so they reach our JavaScript keydown handlers instead.
@@ -90,6 +93,8 @@ fn main() {
             watcher::watch_file,
             watcher::unwatch_file,
             watcher::unwatch_all_files,
+            watcher::watch_directory,
+            watcher::unwatch_directory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Volt");
