@@ -1162,7 +1162,7 @@ async function init() {
   document.getElementById('btn-open-folder-large').addEventListener('click', () => openFolder());
   document.getElementById('btn-open-folder-welcome').addEventListener('click', () => openFolder());
   document.getElementById('btn-refresh-tree').addEventListener('click', () => {
-    if (currentFolder) refreshTree();
+    if (currentFolder) loadDirectory(currentFolder);
   });
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
   document.getElementById('sidebar-title').addEventListener('click', closeFolder);
