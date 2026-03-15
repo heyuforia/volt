@@ -64,6 +64,7 @@ fn main() {
             config::check_config_health,
             fs::read_directory,
             fs::open_in_file_manager,
+            fs::open_url,
             fs::read_file,
             fs::read_image_file,
             fs::save_file,

@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { getCurrentFolder } from './app.js';
+import { getCurrentFolder, openFile } from './app.js';
 import { resolveFileIcon } from './file-tree.js';
 import { setEditorFontSize } from './editor.js';
 import { Terminal } from '@xterm/xterm';
@@ -208,7 +208,10 @@ export async function createTerminalTab() {
 
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
-  terminal.loadAddon(new WebLinksAddon());
+  terminal.loadAddon(new WebLinksAddon((_event, url) => {
+    invoke('open_url', { url }).catch(e => console.warn('Failed to open URL:', e));
+  }));
+  terminal.registerLinkProvider(createFilePathLinkProvider(terminal));
 
   // Terminal wrapper element
   const wrapper = document.createElement('div');
@@ -659,6 +662,75 @@ function showEmptyState() {
 function hideEmptyState() {
   const el = terminalContainer.querySelector('.empty-state');
   if (el) el.remove();
+}
+
+// Link provider that detects file paths in terminal output (e.g. "src/js/app.js:42")
+// and opens them in Volt's editor when clicked.
+function createFilePathLinkProvider(term) {
+  // Matches paths like: ./src/foo.js, src/foo.js:42, C:\foo\bar.rs:10:5, /home/user/file.py
+  // Captures: [1]=line number (optional)
+  const FILE_PATH_RE = /(?:\.?[\/\\])?(?:[\w.@~-]+[\/\\])+[\w.-]+\.[\w]+(?::(\d+))?(?::\d+)?/g;
+
+  // Common file extensions to avoid matching random dotted paths
+  const FILE_EXTS = new Set([
+    'js','ts','jsx','tsx','mjs','cjs','json','jsonc',
+    'rs','go','py','rb','java','kt','swift','c','h','cpp','hpp','cs',
+    'html','htm','css','scss','sass','less',
+    'md','txt','yaml','yml','toml','xml','svg',
+    'sh','bash','zsh','fish','ps1','bat','cmd',
+    'vue','svelte','astro','dart','lua','zig','ex','exs',
+    'sql','graphql','proto','lock','cfg','ini','env',
+    'dockerfile',
+  ]);
+
+  return {
+    provideLinks(bufferLineNumber, callback) {
+      const folder = getCurrentFolder();
+      if (!folder) { callback([]); return; }
+
+      const line = term.buffer.active.getLine(bufferLineNumber - 1);
+      if (!line) { callback([]); return; }
+
+      const lineText = line.translateToString(true);
+      const links = [];
+
+      FILE_PATH_RE.lastIndex = 0;
+      let match;
+      while ((match = FILE_PATH_RE.exec(lineText)) !== null) {
+        const fullMatch = match[0];
+        const lineNum = match[1] ? parseInt(match[1], 10) : undefined;
+
+        // Check file extension
+        const ext = fullMatch.replace(/:\d+(:\d+)?$/, '').split('.').pop().toLowerCase();
+        if (!FILE_EXTS.has(ext)) continue;
+
+        const startIndex = match.index;
+        // xterm.js IBufferRange: x is 1-based, end is inclusive
+        links.push({
+          range: {
+            start: { x: startIndex + 1, y: bufferLineNumber },
+            end: { x: startIndex + fullMatch.length, y: bufferLineNumber },
+          },
+          text: fullMatch,
+          activate() {
+            // Strip trailing :line:col from the path
+            let filePath = fullMatch.replace(/:\d+(:\d+)?$/, '');
+
+            // Resolve relative paths against the current folder
+            if (!filePath.match(/^[A-Za-z]:[\/\\]/) && !filePath.startsWith('/')) {
+              const sep = folder.includes('/') ? '/' : '\\';
+              filePath = folder + sep + filePath.replace(/^\.?[\/\\]/, '').replace(/[\\/]/g, sep);
+            }
+
+            const name = filePath.split(/[\\/]/).pop();
+            openFile({ path: filePath, name, is_dir: false }, lineNum);
+          },
+        });
+      }
+
+      callback(links);
+    },
+  };
 }
 
 function fitTerminal(tab) {

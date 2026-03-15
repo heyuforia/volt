@@ -628,7 +628,7 @@ function handleFileDeleted(path, isDir) {
   }
 }
 
-async function openFile(entry, targetLine) {
+export async function openFile(entry, targetLine) {
   // Dedup: if file already open, just activate it
   const existing = findTabByFilePath(entry.path);
   if (existing) {
