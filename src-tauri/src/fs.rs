@@ -472,21 +472,50 @@ pub async fn search_in_files(
     path: String,
     query: String,
     ignored: Option<Vec<String>>,
+    is_regex: Option<bool>,
 ) -> Result<SearchResults, String> {
     if query.is_empty() {
         return Ok(SearchResults { results: Vec::new(), truncated: false });
     }
     tokio::task::spawn_blocking(move || {
-        search_in_files_inner(path, query, ignored)
+        search_in_files_inner(path, query, ignored, is_regex.unwrap_or(false))
     })
     .await
     .map_err(|e| format!("Search task failed: {}", e))?
+}
+
+/// Trait object for search matching — avoids duplicating the file-walk logic
+/// for literal vs regex search.
+trait LineMatcher: Sync {
+    /// Returns the byte offset of the first match in `line`, or None.
+    fn find_in(&self, line: &str) -> Option<usize>;
+}
+
+struct LiteralMatcher {
+    query_lower: Vec<u8>,
+}
+
+impl LineMatcher for LiteralMatcher {
+    fn find_in(&self, line: &str) -> Option<usize> {
+        find_ascii_case_insensitive(line.as_bytes(), &self.query_lower)
+    }
+}
+
+struct RegexMatcher {
+    re: regex::Regex,
+}
+
+impl LineMatcher for RegexMatcher {
+    fn find_in(&self, line: &str) -> Option<usize> {
+        self.re.find(line).map(|m| m.start())
+    }
 }
 
 fn search_in_files_inner(
     path: String,
     query: String,
     ignored: Option<Vec<String>>,
+    is_regex: bool,
 ) -> Result<SearchResults, String> {
     validate_path(&path)?;
     let root = Path::new(&path);
@@ -500,7 +529,19 @@ fn search_in_files_inner(
         return Ok(SearchResults { results: Vec::new(), truncated: false });
     }
 
-    let query_lower: Vec<u8> = query.bytes().map(|b| b.to_ascii_lowercase()).collect();
+    // Build matcher: regex or case-insensitive literal
+    let matcher: Box<dyn LineMatcher> = if is_regex {
+        let re = regex::RegexBuilder::new(&query)
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| format!("Invalid regex: {}", e))?;
+        Box::new(RegexMatcher { re })
+    } else {
+        Box::new(LiteralMatcher {
+            query_lower: query.bytes().map(|b| b.to_ascii_lowercase()).collect(),
+        })
+    };
+
     let max_results: usize = 200;
     let total_found = std::sync::atomic::AtomicUsize::new(0);
     let num_threads = std::thread::available_parallelism()
@@ -514,7 +555,7 @@ fn search_in_files_inner(
         let handles: Vec<_> = full_paths
             .chunks(chunk_size)
             .map(|chunk| {
-                let query_lower = &query_lower;
+                let matcher = &matcher;
                 let total_found = &total_found;
                 s.spawn(move || {
                     let mut local_results = Vec::new();
@@ -550,8 +591,7 @@ fn search_in_files_inner(
                             {
                                 break;
                             }
-                            if let Some(col) =
-                                find_ascii_case_insensitive(line.as_bytes(), query_lower)
+                            if let Some(col) = matcher.find_in(line)
                             {
                                 local_results.push(SearchMatch {
                                     path: path_str.clone(),

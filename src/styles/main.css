@@ -328,6 +328,28 @@ button:hover {
   background: var(--git-modified);
 }
 
+/* Loading indicator */
+.tree-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.tree-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--purple);
+  border-radius: 50%;
+  animation: tree-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes tree-spin {
+  to { transform: rotate(360deg); }
+}
+
 .tree-children {
   display: none;
 }
@@ -1541,9 +1563,56 @@ button:hover {
   color: var(--text);
 }
 
+.breadcrumb-segment.breadcrumb-clickable {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 3px;
+  margin: 0 -3px;
+  transition: color 0.15s, background 0.15s;
+}
+.breadcrumb-segment.breadcrumb-clickable:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
 .breadcrumb-separator {
   color: var(--scrollbar);
   margin: 0 5px;
+}
+
+/* ── Breadcrumb action buttons ── */
+.breadcrumb-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+#btn-word-wrap {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+#btn-word-wrap:hover {
+  color: var(--text);
+  background: var(--border);
+}
+#btn-word-wrap.active {
+  color: var(--purple);
+  border-color: rgba(180, 93, 255, 0.25);
+  background: rgba(180, 93, 255, 0.06);
+}
+#btn-word-wrap svg {
+  flex-shrink: 0;
 }
 
 /* ── Markdown preview toggle ── */
@@ -1558,7 +1627,6 @@ button:hover {
   background: transparent;
   border: 1px solid transparent;
   flex-shrink: 0;
-  margin-left: 8px;
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 #btn-md-preview:hover {
@@ -2026,6 +2094,26 @@ button:hover {
 #search-input::placeholder {
   color: var(--text-placeholder);
 }
+.search-toggle-btn {
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  color: var(--text-placeholder);
+  flex-shrink: 0;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.search-toggle-btn:hover {
+  color: var(--text);
+  background: var(--border);
+}
+.search-toggle-btn.active {
+  color: var(--purple);
+  border-color: rgba(180, 93, 255, 0.3);
+  background: rgba(180, 93, 255, 0.08);
+}
 #search-close {
   padding: 8px 14px;
   font-size: 18px;
@@ -2328,6 +2416,15 @@ button:hover {
 @keyframes toast-timer {
   from { width: 100%; }
   to   { width: 0%; }
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ── Utility ── */

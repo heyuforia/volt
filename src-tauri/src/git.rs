@@ -2,8 +2,10 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::Instant;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct GitStatus {
     /// Map of relative path → status code ("M", "A", "D", "U", "?")
     pub files: HashMap<String, String>,
@@ -12,6 +14,19 @@ pub struct GitStatus {
     /// The git repo root (so frontend can compute relative paths)
     pub root: String,
 }
+
+/// Cached git status to avoid re-running git on every file tree refresh.
+/// TTL: 2 seconds. Keyed by git root path.
+struct GitCache {
+    root: String,
+    result: GitStatus,
+    timestamp: Instant,
+}
+
+static GIT_CACHE: std::sync::LazyLock<Mutex<Option<GitCache>>> =
+    std::sync::LazyLock::new(|| Mutex::new(None));
+
+const GIT_CACHE_TTL_MS: u128 = 2000;
 
 /// Walk up from `start` to find the nearest `.git` directory.
 fn find_git_root(start: &Path) -> Option<&Path> {
@@ -75,6 +90,18 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
 fn git_status_inner(path: &str) -> Result<GitStatus, String> {
     let dir = Path::new(path);
     let git_root = find_git_root(dir).ok_or_else(|| "Not a git repository".to_string())?;
+    let root_str = git_root.to_string_lossy().to_string();
+
+    // Check cache: return cached result if still fresh
+    if let Ok(cache) = GIT_CACHE.lock() {
+        if let Some(ref cached) = *cache {
+            if cached.root == root_str
+                && cached.timestamp.elapsed().as_millis() < GIT_CACHE_TTL_MS
+            {
+                return Ok(cached.result.clone());
+            }
+        }
+    }
 
     let output = Command::new("git")
         .args(["status", "--porcelain", "--ignored"])
@@ -90,11 +117,22 @@ fn git_status_inner(path: &str) -> Result<GitStatus, String> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let (files, ignored) = parse_porcelain(&stdout);
 
-    Ok(GitStatus {
+    let result = GitStatus {
         files,
         ignored,
-        root: git_root.to_string_lossy().to_string(),
-    })
+        root: root_str.clone(),
+    };
+
+    // Update cache
+    if let Ok(mut cache) = GIT_CACHE.lock() {
+        *cache = Some(GitCache {
+            root: root_str,
+            result: result.clone(),
+            timestamp: Instant::now(),
+        });
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import { initFileTree, loadDirectory, refreshTree, setIgnoredPatterns, setFileClickHandler, setFileRenamedHandler, setFileDeletedHandler, refreshGitStatus } from './file-tree.js';
 import { initTerminals, createTerminalTab, getActiveTerminalCount, setTerminalConfig, addFileTab, findTabByFilePath, getActiveTab, getUnsavedFileTabs, getAllTabs, closeAllTabs, setActivationCallback, getTerminalConfig, renderTabs, activateTab, setTabCloseCallback, updateFileTabPath, getFileTabsByPathPrefix, forceCloseFileTab } from './terminal.js';
-import { createEditorView, getEditorContent, markClean, replaceEditorContent, goToLine } from './editor.js';
+import { createEditorView, getEditorContent, markClean, replaceEditorContent, goToLine, toggleLineWrap, isLineWrapped } from './editor.js';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { initStatusBar } from './status-bar.js';
@@ -348,6 +348,15 @@ function initKeyboardShortcuts() {
         showSearch(currentFolder, config?.ignoredPatterns);
       }
     }
+    // Alt+Z — Toggle word wrap
+    if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key === 'z') {
+      e.preventDefault();
+      const activeTab = getActiveTab();
+      if (activeTab?.type === 'file' && activeTab.editorView) {
+        const wrapped = toggleLineWrap(activeTab.editorView);
+        btnWordWrap.classList.toggle('active', wrapped);
+      }
+    }
     // Ctrl+= / Ctrl+- — Zoom
     if (e.ctrlKey && !e.shiftKey && (e.key === '=' || e.key === '+')) {
       e.preventDefault();
@@ -472,6 +481,7 @@ let fileTabCounter = 0;
 const breadcrumbBar = document.getElementById('breadcrumb-bar');
 const breadcrumbPath = document.getElementById('breadcrumb-path');
 const btnMdPreview = document.getElementById('btn-md-preview');
+const btnWordWrap = document.getElementById('btn-word-wrap');
 const openingFiles = new Set(); // prevents duplicate opens from rapid clicks
 const saveCooldowns = new Map(); // path -> timestamp, ignore watcher events right after save
 const autoSaveTimers = new Map(); // filePath -> timeout ID for debounced auto-save
@@ -820,6 +830,7 @@ function updateBreadcrumb(filePath) {
     ? normalFile.slice(normalFolder.length)
     : filePath.split(/[\\/]/).pop();
   const parts = relative.split('/');
+  const folderSep = currentFolder.includes('/') ? '/' : '\\';
 
   breadcrumbPath.innerHTML = '';
   parts.forEach((part, i) => {
@@ -832,6 +843,19 @@ function updateBreadcrumb(filePath) {
     const seg = document.createElement('span');
     seg.className = 'breadcrumb-segment';
     seg.textContent = part;
+
+    // Folder segments (all except the last) are clickable
+    const isFolder = i < parts.length - 1;
+    if (isFolder) {
+      seg.classList.add('breadcrumb-clickable');
+      seg.title = 'Open folder in file manager';
+      const folderRelative = parts.slice(0, i + 1).join(folderSep);
+      const folderPath = currentFolder + folderSep + folderRelative;
+      seg.addEventListener('click', () => {
+        invoke('open_in_file_manager', { path: folderPath })
+          .catch(err => console.warn('Failed to open file manager:', err));
+      });
+    }
     breadcrumbPath.appendChild(seg);
   });
 
@@ -1054,6 +1078,13 @@ async function init() {
           .catch(e => console.warn('LSP didOpen failed:', e));
       }
     }
+  }, (relativeFile, line) => {
+    // Diagnostic click: open file at the given line
+    if (!currentFolder) return;
+    const sep = currentFolder.includes('/') ? '/' : '\\';
+    const fullPath = currentFolder + sep + relativeFile.replace(/[\\/]/g, sep);
+    const name = relativeFile.split(/[\\/]/).pop();
+    openFile({ path: fullPath, name, is_dir: false }, line);
   });
   initEmulator();
   if (config?.terminal) setTerminalConfig(config.terminal);
@@ -1153,6 +1184,12 @@ async function init() {
     if (tab?.type === 'file') {
       updateBreadcrumb(tab.filePath);
 
+      // Sync word wrap button with this tab's wrap state
+      btnWordWrap.style.display = (tab.editorView && !tab.isImage) ? 'inline-flex' : 'none';
+      if (tab.editorView) {
+        btnWordWrap.classList.toggle('active', isLineWrapped(tab.editorView));
+      }
+
       if (tab.isImage) {
         statusCursor.classList.add('hidden');
       } else {
@@ -1188,6 +1225,14 @@ async function init() {
       breadcrumbBar.classList.add('hidden');
       statusCursor.classList.add('hidden');
     }
+  });
+
+  // Word wrap toggle
+  btnWordWrap.addEventListener('click', () => {
+    const tab = getActiveTab();
+    if (!tab || tab.type !== 'file' || !tab.editorView) return;
+    const wrapped = toggleLineWrap(tab.editorView);
+    btnWordWrap.classList.toggle('active', wrapped);
   });
 
   // Markdown preview toggle

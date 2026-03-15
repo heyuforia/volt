@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentFolder } from './app.js';
-import { escapeHtml } from './utils.js';
 
 let analyzerRunning = false;
 let diagnosticsMap = {}; // uri -> diagnostics[]
@@ -10,6 +9,7 @@ let lastCrashTime = 0;
 let cachedDiagnostics = null; // cached sorted array, invalidated on update
 let onHeightChange = null;
 let onRestarted = null;
+let onDiagnosticClick = null;
 
 const statusLint = document.getElementById('status-lint');
 
@@ -86,9 +86,10 @@ function createPanel(initialHeight) {
 
 // ── Public API ──
 
-export function initAnalyzer(initialHeight, heightChangeCallback, restartedCallback) {
+export function initAnalyzer(initialHeight, heightChangeCallback, restartedCallback, diagnosticClickCallback) {
   onHeightChange = heightChangeCallback || null;
   onRestarted = restartedCallback || null;
+  onDiagnosticClick = diagnosticClickCallback || null;
   createPanel(initialHeight);
   buildStatusLint();
   statusLint.classList.add('hidden');
@@ -184,7 +185,9 @@ function getAllDiagnostics() {
   if (cachedDiagnostics) return cachedDiagnostics;
   const all = [];
   for (const uri in diagnosticsMap) {
-    all.push(...diagnosticsMap[uri]);
+    for (const d of diagnosticsMap[uri]) {
+      all.push({ ...d, _uri: uri });
+    }
   }
   // Sort: errors first, then warnings, then info
   const order = { error: 0, warning: 1, info: 2 };
@@ -261,15 +264,38 @@ function renderPanel() {
     return;
   }
 
-  list.innerHTML = all.map(d => {
+  const fragment = document.createDocumentFragment();
+  for (const d of all) {
     const icon = d.severity === 'error' ? '\u2717' : d.severity === 'warning' ? '\u26A0' : '\u2139';
     const color = d.severity === 'error' ? '#f44747' : d.severity === 'warning' ? '#e5a235' : '#7a7a8a';
-    return `
-      <div class="diag-item">
-        <span class="diag-icon" style="color:${color}">${icon}</span>
-        <span class="diag-file">${escapeHtml(d.file)}:${d.line}:${d.column}</span>
-        <span class="diag-message">${escapeHtml(d.message)}</span>
-      </div>
-    `;
-  }).join('');
+
+    const item = document.createElement('div');
+    item.className = 'diag-item';
+
+    const iconEl = document.createElement('span');
+    iconEl.className = 'diag-icon';
+    iconEl.style.color = color;
+    iconEl.textContent = icon;
+
+    const fileEl = document.createElement('span');
+    fileEl.className = 'diag-file';
+    fileEl.textContent = `${d.file}:${d.line}:${d.column}`;
+
+    const msgEl = document.createElement('span');
+    msgEl.className = 'diag-message';
+    msgEl.textContent = d.message;
+
+    item.appendChild(iconEl);
+    item.appendChild(fileEl);
+    item.appendChild(msgEl);
+
+    // Click to open file at the diagnostic location
+    item.addEventListener('click', () => {
+      if (onDiagnosticClick) onDiagnosticClick(d.file, d.line);
+    });
+
+    fragment.appendChild(item);
+  }
+  list.innerHTML = '';
+  list.appendChild(fragment);
 }

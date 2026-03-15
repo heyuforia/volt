@@ -142,6 +142,11 @@ export async function loadDirectory(path, preserveState = false) {
   // Increment generation so any in-flight call becomes stale
   const thisGen = ++loadGeneration;
 
+  // Show loading indicator (only for fresh loads, not preserveState refreshes)
+  if (!preserveState) {
+    fileTreeEl.innerHTML = '<div class="tree-loading"><span class="tree-loading-spinner"></span>Loading...</div>';
+  }
+
   // Fetch git status in parallel with directory listing
   const gitPromise = invoke('git_status', { path }).then(result => {
     gitStatusMap = result.files;

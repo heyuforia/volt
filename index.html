@@ -110,15 +110,25 @@
       <!-- Breadcrumb bar (shown for file tabs) -->
       <div id="breadcrumb-bar" class="hidden">
         <span id="breadcrumb-path"></span>
-        <button id="btn-md-preview" title="Toggle Markdown Preview">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <rect x="1" y="3" width="14" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/>
-            <path d="M3.5 10V6l2 2.5L7.5 6v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M10.5 8.5l1.5-2 1.5 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M12 6.5v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/>
-          </svg>
-          Preview
-        </button>
+        <div class="breadcrumb-actions">
+          <button id="btn-word-wrap" title="Toggle Word Wrap (Alt+Z)">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M2 3h12M2 7h9a2.5 2.5 0 0 1 0 5H8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <path d="M9.5 10.5L8 12l1.5 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <path d="M2 13h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+            </svg>
+            Wrap
+          </button>
+          <button id="btn-md-preview" title="Toggle Markdown Preview">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect x="1" y="3" width="14" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/>
+              <path d="M3.5 10V6l2 2.5L7.5 6v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <path d="M10.5 8.5l1.5-2 1.5 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <path d="M12 6.5v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+            </svg>
+            Preview
+          </button>
+        </div>
       </div>
 
       <!-- Terminal container -->
@@ -141,6 +151,7 @@
     <div class="search-dialog">
       <div class="search-header">
         <input type="text" id="search-input" placeholder="Search in files..." autocomplete="off" />
+        <button id="search-regex" class="search-toggle-btn" title="Use Regular Expression">.*</button>
         <button id="search-close">&times;</button>
       </div>
       <div id="search-results"></div>

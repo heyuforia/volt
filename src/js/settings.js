@@ -166,11 +166,32 @@ function openSettings(getConfig, onConfigChanged) {
 
   // Save from UI tab
   document.getElementById('btn-save-settings').addEventListener('click', async () => {
-    const fontSize = parseInt(document.getElementById('set-font-size').value) || 14;
-    const scrollback = parseInt(document.getElementById('set-scrollback').value) || 5000;
+    const rawFontSize = parseInt(document.getElementById('set-font-size').value);
+    const rawScrollback = parseInt(document.getElementById('set-scrollback').value);
+    const rawAutoSaveDelay = parseInt(document.getElementById('set-auto-save-delay').value);
+
+    // Validate and clamp to safe ranges
+    const errors = [];
+    if (isNaN(rawFontSize) || rawFontSize < 8 || rawFontSize > 32) {
+      errors.push('Font size must be between 8 and 32');
+    }
+    if (isNaN(rawScrollback) || rawScrollback < 500 || rawScrollback > 50000) {
+      errors.push('Scrollback must be between 500 and 50,000');
+    }
+    if (isNaN(rawAutoSaveDelay) || rawAutoSaveDelay < 500 || rawAutoSaveDelay > 10000) {
+      errors.push('Auto save delay must be between 500 and 10,000 ms');
+    }
+
+    if (errors.length > 0) {
+      showSaveError(panelEl, errors.join('. '));
+      return;
+    }
+
+    const fontSize = rawFontSize;
+    const scrollback = rawScrollback;
     const shell = document.getElementById('set-shell').value.trim();
     const autoSave = document.getElementById('set-auto-save').checked;
-    const autoSaveDelay = parseInt(document.getElementById('set-auto-save-delay').value) || 1500;
+    const autoSaveDelay = rawAutoSaveDelay;
     const ignored = document.getElementById('set-ignored').value
       .split(',').map(s => s.trim()).filter(Boolean);
 
