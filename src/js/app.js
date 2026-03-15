@@ -866,9 +866,9 @@ function toggleMarkdownPreview() {
         'a','strong','em','b','i','code','pre','blockquote',
         'table','thead','tbody','tr','th','td',
         'img','del','sup','sub','mark','details','summary',
-        'dl','dt','dd','kbd','s','small',
+        'dl','dt','dd','kbd','s','small','input',
       ],
-      ALLOWED_ATTR: ['href','src','alt','title','id','align','colspan','rowspan','open'],
+      ALLOWED_ATTR: ['href','src','alt','title','id','align','colspan','rowspan','open','type','checked','disabled','class','start'],
       ALLOW_DATA_ATTR: false,
     });
 
