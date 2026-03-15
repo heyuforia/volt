@@ -1,6 +1,6 @@
 {
   "productName": "Volt",
-  "version": "0.3.1",
+  "version": "0.3.5",
   "identifier": "com.uforia.volt",
   "build": {
     "frontendDist": "../dist",
