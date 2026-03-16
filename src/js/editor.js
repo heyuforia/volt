@@ -261,7 +261,6 @@ export async function createEditorView(content, language, wrapper, fontSize, onM
 
   const fontComp = new Compartment();
   const langComp = new Compartment();
-  const wrapComp = new Compartment();
 
   const langExt = await loadLanguage(language);
 
@@ -303,7 +302,7 @@ export async function createEditorView(content, language, wrapper, fontSize, onM
       syntaxHighlighting(voltHighlightStyle),
       fontComp.of(fontSizeExtension(fontSize)),
       langComp.of(langExt),
-      wrapComp.of([]),
+      EditorView.lineWrapping,
       updateListener,
     ],
   });
@@ -313,16 +312,6 @@ export async function createEditorView(content, language, wrapper, fontSize, onM
   // Attach per-view references
   view._voltOriginal = { get: () => originalContent, set: (v) => { originalContent = v; wasModified = false; } };
   view._voltFontComp = fontComp;
-  view._voltWrapComp = wrapComp;
-  view._voltWrapped = false;
-
-  // Enable word wrap by default for prose-oriented languages
-  if (language === 'markdown') {
-    view._voltWrapped = true;
-    view.dispatch({
-      effects: wrapComp.reconfigure(EditorView.lineWrapping),
-    });
-  }
 
   return view;
 }
@@ -367,17 +356,3 @@ export function setEditorFontSize(view, size) {
   }
 }
 
-export function toggleLineWrap(view) {
-  if (!view._voltWrapComp) return false;
-  view._voltWrapped = !view._voltWrapped;
-  view.dispatch({
-    effects: view._voltWrapComp.reconfigure(
-      view._voltWrapped ? EditorView.lineWrapping : []
-    ),
-  });
-  return view._voltWrapped;
-}
-
-export function isLineWrapped(view) {
-  return !!view._voltWrapped;
-}

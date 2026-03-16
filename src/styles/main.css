@@ -1589,32 +1589,6 @@ button:hover {
   margin-left: 8px;
 }
 
-#btn-word-wrap {
-  display: none;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 3px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  background: transparent;
-  border: 1px solid transparent;
-  flex-shrink: 0;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
-}
-#btn-word-wrap:hover {
-  color: var(--text);
-  background: var(--border);
-}
-#btn-word-wrap.active {
-  color: var(--purple);
-  border-color: rgba(180, 93, 255, 0.25);
-  background: rgba(180, 93, 255, 0.06);
-}
-#btn-word-wrap svg {
-  flex-shrink: 0;
-}
-
 /* ── Markdown preview toggle ── */
 #btn-md-preview {
   display: none;

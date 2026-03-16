@@ -5,7 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import { initFileTree, loadDirectory, refreshTree, setIgnoredPatterns, setFileClickHandler, setFileRenamedHandler, setFileDeletedHandler, refreshGitStatus } from './file-tree.js';
 import { initTerminals, createTerminalTab, getActiveTerminalCount, setTerminalConfig, addFileTab, findTabByFilePath, getActiveTab, getUnsavedFileTabs, getAllTabs, closeAllTabs, setActivationCallback, getTerminalConfig, renderTabs, activateTab, setTabCloseCallback, updateFileTabPath, getFileTabsByPathPrefix, forceCloseFileTab } from './terminal.js';
-import { createEditorView, getEditorContent, markClean, replaceEditorContent, goToLine, toggleLineWrap, isLineWrapped } from './editor.js';
+import { createEditorView, getEditorContent, markClean, replaceEditorContent, goToLine } from './editor.js';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { initStatusBar } from './status-bar.js';
@@ -348,15 +348,6 @@ function initKeyboardShortcuts() {
         showSearch(currentFolder, config?.ignoredPatterns);
       }
     }
-    // Alt+Z — Toggle word wrap
-    if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key === 'z') {
-      e.preventDefault();
-      const activeTab = getActiveTab();
-      if (activeTab?.type === 'file' && activeTab.editorView) {
-        const wrapped = toggleLineWrap(activeTab.editorView);
-        btnWordWrap.classList.toggle('active', wrapped);
-      }
-    }
     // Ctrl+= / Ctrl+- — Zoom
     if (e.ctrlKey && !e.shiftKey && (e.key === '=' || e.key === '+')) {
       e.preventDefault();
@@ -481,7 +472,6 @@ let fileTabCounter = 0;
 const breadcrumbBar = document.getElementById('breadcrumb-bar');
 const breadcrumbPath = document.getElementById('breadcrumb-path');
 const btnMdPreview = document.getElementById('btn-md-preview');
-const btnWordWrap = document.getElementById('btn-word-wrap');
 const openingFiles = new Set(); // prevents duplicate opens from rapid clicks
 const saveCooldowns = new Map(); // path -> timestamp, ignore watcher events right after save
 const autoSaveTimers = new Map(); // filePath -> timeout ID for debounced auto-save
@@ -1184,12 +1174,6 @@ async function init() {
     if (tab?.type === 'file') {
       updateBreadcrumb(tab.filePath);
 
-      // Sync word wrap button with this tab's wrap state
-      btnWordWrap.style.display = (tab.editorView && !tab.isImage) ? 'inline-flex' : 'none';
-      if (tab.editorView) {
-        btnWordWrap.classList.toggle('active', isLineWrapped(tab.editorView));
-      }
-
       if (tab.isImage) {
         statusCursor.classList.add('hidden');
       } else {
@@ -1228,13 +1212,6 @@ async function init() {
   });
 
   // Word wrap toggle
-  btnWordWrap.addEventListener('click', () => {
-    const tab = getActiveTab();
-    if (!tab || tab.type !== 'file' || !tab.editorView) return;
-    const wrapped = toggleLineWrap(tab.editorView);
-    btnWordWrap.classList.toggle('active', wrapped);
-  });
-
   // Markdown preview toggle
   btnMdPreview.addEventListener('click', toggleMarkdownPreview);
 
