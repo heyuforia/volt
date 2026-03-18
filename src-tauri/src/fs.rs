@@ -621,6 +621,14 @@ fn search_in_files_inner(
     Ok(SearchResults { results, truncated })
 }
 
+/// Check if a path is a directory. No path validation — used by drag-and-drop
+/// to distinguish folders from files before a project root is set.
+/// Safe: returns only a boolean, no content is exposed.
+#[tauri::command]
+pub fn is_directory(path: String) -> bool {
+    Path::new(&path).is_dir()
+}
+
 #[tauri::command]
 pub fn open_in_file_manager(path: String) -> Result<(), String> {
     validate_path(&path)?;

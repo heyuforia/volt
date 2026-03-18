@@ -258,6 +258,13 @@ function initSidebarResize() {
       document.body.style.userSelect = '';
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+
+      // Persist sidebar width so it survives crashes (not just clean close)
+      if (config) {
+        if (!config.window) config.window = {};
+        config.window.sidebarWidth = sidebar.offsetWidth;
+        saveConfigDebounced();
+      }
     };
 
     document.addEventListener('mousemove', onMouseMove);
@@ -447,11 +454,12 @@ function initDragDrop() {
       await webview.onDragDropEvent(async (event) => {
         if (event.payload.type === 'drop' && event.payload.paths?.length > 0) {
           const path = event.payload.paths[0];
-          // Check if it's a directory
-          try {
-            await invoke('read_directory', { path });
+          // Use is_directory (no path validation) so drag-and-drop works
+          // before a project folder is open or for paths outside the project
+          const isDir = await invoke('is_directory', { path });
+          if (isDir) {
             openFolder(path);
-          } catch {
+          } else {
             // It's a file — paste path into terminal if active, otherwise open in editor
             const tab = getActiveTab();
             if (tab?.type === 'terminal' && tab.ptyId && !tab.exited) {

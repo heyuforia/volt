@@ -62,6 +62,7 @@ fn main() {
             config::load_config,
             config::save_config,
             config::check_config_health,
+            fs::is_directory,
             fs::read_directory,
             fs::open_in_file_manager,
             fs::open_url,

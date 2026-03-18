@@ -6,6 +6,44 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Emitter};
 
+/// Find the largest prefix of `bytes` that ends on a complete UTF-8 boundary.
+/// Returns `bytes.len()` when the final byte completes (or is ASCII).
+/// Otherwise returns the index of the first byte of the trailing incomplete
+/// multi-byte sequence so the caller can carry it to the next read.
+fn utf8_safe_split(bytes: &[u8]) -> usize {
+    let len = bytes.len();
+    if len == 0 {
+        return 0;
+    }
+    // Scan backwards (at most 3 bytes) to find the last leading byte
+    let start = len.saturating_sub(3);
+    let mut i = len;
+    while i > start {
+        i -= 1;
+        let b = bytes[i];
+        if b & 0x80 == 0 {
+            // ASCII — everything up to and including this byte is complete
+            return len;
+        }
+        if b & 0xC0 != 0x80 {
+            // Leading byte: determine expected sequence length
+            let expected = if b & 0xE0 == 0xC0 {
+                2
+            } else if b & 0xF0 == 0xE0 {
+                3
+            } else if b & 0xF8 == 0xF0 {
+                4
+            } else {
+                1 // invalid leading byte — pass through for lossy conversion
+            };
+            return if len - i >= expected { len } else { i };
+        }
+        // Continuation byte (10xxxxxx) — keep scanning backwards
+    }
+    // All checked bytes are continuation bytes (orphaned) — pass through
+    len
+}
+
 type PtyWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 
 struct PtyInstance {
@@ -127,21 +165,62 @@ pub fn spawn_terminal(
     let read_app = app.clone();
     thread::spawn(move || {
         let mut buf = [0u8; 16384];
+        let mut carry: Vec<u8> = Vec::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = read_app.emit(
-                        "terminal-output",
-                        TerminalOutput {
-                            id: read_id.clone(),
-                            data,
-                        },
-                    );
+                    if carry.is_empty() {
+                        // Fast path: no leftover bytes from previous read
+                        let split = utf8_safe_split(&buf[..n]);
+                        let data = String::from_utf8_lossy(&buf[..split]).to_string();
+                        if !data.is_empty() {
+                            let _ = read_app.emit(
+                                "terminal-output",
+                                TerminalOutput {
+                                    id: read_id.clone(),
+                                    data,
+                                },
+                            );
+                        }
+                        if split < n {
+                            carry.extend_from_slice(&buf[split..n]);
+                        }
+                    } else {
+                        // Slow path: combine carry + new bytes
+                        carry.extend_from_slice(&buf[..n]);
+                        let split = utf8_safe_split(&carry);
+                        if split > 0 {
+                            let data = String::from_utf8_lossy(&carry[..split]).to_string();
+                            let _ = read_app.emit(
+                                "terminal-output",
+                                TerminalOutput {
+                                    id: read_id.clone(),
+                                    data,
+                                },
+                            );
+                        }
+                        if split < carry.len() {
+                            let remaining = carry[split..].to_vec();
+                            carry = remaining;
+                        } else {
+                            carry.clear();
+                        }
+                    }
                 }
                 Err(_) => break,
             }
+        }
+        // Flush any remaining carry bytes on EOF/error
+        if !carry.is_empty() {
+            let data = String::from_utf8_lossy(&carry).to_string();
+            let _ = read_app.emit(
+                "terminal-output",
+                TerminalOutput {
+                    id: read_id.clone(),
+                    data,
+                },
+            );
         }
     });
 
@@ -242,4 +321,79 @@ pub fn kill_terminal(id: String) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_utf8_safe_split_ascii() {
+        assert_eq!(utf8_safe_split(b"hello"), 5);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_empty() {
+        assert_eq!(utf8_safe_split(b""), 0);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_complete_2byte() {
+        // "ñ" = 0xC3 0xB1
+        assert_eq!(utf8_safe_split(&[0xC3, 0xB1]), 2);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_incomplete_2byte() {
+        // 'A' + leading byte of 2-byte sequence, missing continuation
+        assert_eq!(utf8_safe_split(&[0x41, 0xC3]), 1);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_complete_3byte() {
+        // "中" = 0xE4 0xB8 0xAD
+        assert_eq!(utf8_safe_split(&[0xE4, 0xB8, 0xAD]), 3);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_incomplete_3byte_2of3() {
+        // 'A' + first 2 bytes of "中"
+        assert_eq!(utf8_safe_split(&[0x41, 0xE4, 0xB8]), 1);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_incomplete_3byte_1of3() {
+        // 'A' + just the leading byte of a 3-byte sequence
+        assert_eq!(utf8_safe_split(&[0x41, 0xE4]), 1);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_complete_4byte() {
+        // "😀" = 0xF0 0x9F 0x98 0x80
+        assert_eq!(utf8_safe_split(&[0xF0, 0x9F, 0x98, 0x80]), 4);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_incomplete_4byte() {
+        // 'A' + first 2 bytes of a 4-byte emoji
+        assert_eq!(utf8_safe_split(&[0x41, 0xF0, 0x9F]), 1);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_ascii_then_incomplete() {
+        // "hello" + incomplete 3-byte
+        assert_eq!(utf8_safe_split(&[b'h', b'e', b'l', b'l', b'o', 0xE4, 0xB8]), 5);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_mixed_complete() {
+        // "A中B" = 0x41, 0xE4, 0xB8, 0xAD, 0x42
+        assert_eq!(utf8_safe_split(&[0x41, 0xE4, 0xB8, 0xAD, 0x42]), 5);
+    }
+
+    #[test]
+    fn test_utf8_safe_split_orphan_continuation() {
+        // Orphan continuation bytes are passed through for lossy handling
+        assert_eq!(utf8_safe_split(&[0x80, 0x80]), 2);
+    }
 }
