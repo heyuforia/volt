@@ -121,42 +121,41 @@ pub fn launch_emulator(app: AppHandle, id: String, cold: Option<bool>) -> Result
         return Err("Invalid emulator ID".to_string());
     }
 
-    let child = if cold.unwrap_or(false) {
-        // Cold boot: use Android emulator directly with -no-snapshot-load
-        let android_home = std::env::var("ANDROID_HOME")
-            .or_else(|_| std::env::var("ANDROID_SDK_ROOT"))
-            .unwrap_or_default();
+    // Always use the emulator binary directly instead of `flutter emulators --launch`.
+    // The Flutter CLI wrapper is a short-lived process that spawns the real emulator
+    // separately — we can't monitor its lifecycle, and it handles first-boot (no
+    // snapshot) inconsistently, often producing a black screen. Using the emulator
+    // binary directly matches what VSCode's Flutter extension does via the daemon.
+    let android_home = std::env::var("ANDROID_HOME")
+        .or_else(|_| std::env::var("ANDROID_SDK_ROOT"))
+        .unwrap_or_default();
 
-        let emulator_path = if !android_home.is_empty() {
-            let p = Path::new(&android_home).join("emulator").join("emulator");
-            if p.exists() { p.to_string_lossy().to_string() } else { "emulator".to_string() }
-        } else {
-            "emulator".to_string()
-        };
-
-        let mut cmd = Command::new(&emulator_path);
-        cmd.args(["-avd", &id, "-no-snapshot-load"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000);
-        }
-
-        cmd.spawn()
-            .map_err(|e| format!("Failed to cold boot emulator: {}", e))?
+    let emulator_path = if !android_home.is_empty() {
+        let p = Path::new(&android_home).join("emulator").join("emulator");
+        if p.exists() { p.to_string_lossy().to_string() } else { "emulator".to_string() }
     } else {
-        bat_command("flutter", &["emulators", "--launch", &id])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("Failed to launch emulator: {}", e))?
+        "emulator".to_string()
     };
 
-    // Wait for the emulator process to exit in a background thread
-    // and notify the frontend so it can reset the status bar button.
+    let mut cmd = Command::new(&emulator_path);
+    cmd.args(["-avd", &id]);
+    if cold.unwrap_or(false) {
+        cmd.arg("-no-snapshot-load");
+    }
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to launch emulator: {}", e))?;
+
+    // The child process IS the emulator, so we can monitor it for both
+    // normal and cold boot and reset the status bar when it exits.
     thread::spawn(move || {
         let mut child = child;
         let _ = child.wait();
