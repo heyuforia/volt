@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import { initFileTree, loadDirectory, refreshTree, setIgnoredPatterns, setFileClickHandler, setFileRenamedHandler, setFileDeletedHandler, refreshGitStatus } from './file-tree.js';
-import { initTerminals, createTerminalTab, getActiveTerminalCount, setTerminalConfig, addFileTab, findTabByFilePath, getActiveTab, getUnsavedFileTabs, getAllTabs, closeAllTabs, setActivationCallback, getTerminalConfig, renderTabs, activateTab, setTabCloseCallback, updateFileTabPath, getFileTabsByPathPrefix, forceCloseFileTab } from './terminal.js';
+import { initTerminals, createTerminalTab, getActiveTerminalCount, setTerminalConfig, addFileTab, findTabByFilePath, getActiveTab, getUnsavedFileTabs, getAllTabs, closeAllTabs, setActivationCallback, getTerminalConfig, renderTabs, activateTab, setTabCloseCallback, updateFileTabPath, getFileTabsByPathPrefix, forceCloseFileTab, showTerminalSearch, getActivePaneOfTab } from './terminal.js';
 import { createEditorView, getEditorContent, markClean, replaceEditorContent, goToLine } from './editor.js';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -341,6 +341,14 @@ function initKeyboardShortcuts() {
         saveActiveFile(activeTab);
       }
     }
+    // Ctrl+F — Terminal search (when terminal tab is active)
+    if (e.ctrlKey && !e.shiftKey && e.key === 'f') {
+      const activeTab = getActiveTab();
+      if (activeTab && activeTab.type === 'terminal') {
+        e.preventDefault();
+        showTerminalSearch(activeTab);
+      }
+    }
     // Ctrl+P — Quick Open
     if (e.ctrlKey && !e.shiftKey && e.key === 'p') {
       e.preventDefault();
@@ -462,8 +470,9 @@ function initDragDrop() {
           } else {
             // It's a file — paste path into terminal if active, otherwise open in editor
             const tab = getActiveTab();
-            if (tab?.type === 'terminal' && tab.ptyId && !tab.exited) {
-              invoke('write_terminal', { id: tab.ptyId, data: shellQuotePath(path) }).catch(() => {});
+            const pane = tab?.type === 'terminal' ? getActivePaneOfTab(tab) : null;
+            if (pane && !pane.exited) {
+              invoke('write_terminal', { id: pane.ptyId, data: shellQuotePath(path) }).catch(() => {});
             } else {
               const name = path.split(/[\\/]/).pop();
               openFile({ path, name, is_dir: false });
@@ -1114,8 +1123,9 @@ async function init() {
     if (entry.is_dir) return;
     if (shiftKey) {
       const tab = getActiveTab();
-      if (tab?.type === 'terminal' && tab.ptyId && !tab.exited) {
-        invoke('write_terminal', { id: tab.ptyId, data: shellQuotePath(entry.path) }).catch(() => {});
+      const pane = tab?.type === 'terminal' ? getActivePaneOfTab(tab) : null;
+      if (pane && !pane.exited) {
+        invoke('write_terminal', { id: pane.ptyId, data: shellQuotePath(entry.path) }).catch(() => {});
         return;
       }
     }

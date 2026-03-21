@@ -6,6 +6,7 @@ import { setEditorFontSize } from './editor.js';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { SearchAddon } from '@xterm/addon-search';
 
 const tabList = document.getElementById('tab-list');
 const terminalContainer = document.getElementById('terminal-container');
@@ -14,10 +15,67 @@ const btnNewTab = document.getElementById('btn-new-tab');
 let tabs = [];
 let activeTabId = null;
 let tabCounter = 0;
+let paneCounter = 0;
 let terminalConfig = { fontSize: 14, scrollback: 5000, shell: '' };
-const ptyToTab = new Map(); // ptyId -> tab (O(1) lookup for high-frequency output events)
+const ptyToPane = new Map(); // ptyId -> pane (O(1) lookup for high-frequency output events)
 let activationCallback = null;
 let tabCloseCallback = null;
+
+function nextPaneId() { return `pane-${++paneCounter}`; }
+
+// ── Pane tree helpers ──
+
+function isPane(node) { return node && node.terminal !== undefined; }
+
+function forEachPane(node, fn) {
+  if (!node) return;
+  if (isPane(node)) { fn(node); return; }
+  for (const child of node.children) forEachPane(child, fn);
+}
+
+function countPanes(node) {
+  if (!node) return 0;
+  if (isPane(node)) return 1;
+  return node.children.reduce((sum, c) => sum + countPanes(c), 0);
+}
+
+function findPane(node, paneId) {
+  if (!node) return null;
+  if (isPane(node)) return node.id === paneId ? node : null;
+  for (const child of node.children) {
+    const found = findPane(child, paneId);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Returns the first pane found (for fallback focus)
+function firstPane(node) {
+  if (!node) return null;
+  if (isPane(node)) return node;
+  return firstPane(node.children[0]);
+}
+
+// Replace a pane in the tree with a new node. Returns the new root.
+function replacePaneInTree(root, paneId, replacement) {
+  if (isPane(root)) return root.id === paneId ? replacement : root;
+  const newChildren = root.children.map(c => replacePaneInTree(c, paneId, replacement));
+  return { ...root, children: newChildren };
+}
+
+// Remove a pane from the tree. Returns the new root (or null if tree is now empty).
+function removePaneFromTree(root, paneId) {
+  if (isPane(root)) return root.id === paneId ? null : root;
+  const remaining = root.children.map(c => removePaneFromTree(c, paneId)).filter(Boolean);
+  if (remaining.length === 0) return null;
+  if (remaining.length === 1) return remaining[0]; // collapse split node
+  return { ...root, children: remaining };
+}
+
+export function getActivePaneOfTab(tab) {
+  if (!tab || tab.type !== 'terminal') return null;
+  return findPane(tab.root, tab.activePaneId) || firstPane(tab.root);
+}
 
 export function setTerminalConfig(cfg) {
   if (!cfg) return;
@@ -28,9 +86,11 @@ export function setTerminalConfig(cfg) {
   // Apply to existing tabs
   for (const tab of tabs) {
     if (tab.type === 'terminal') {
-      if (cfg.fontSize) tab.terminal.options.fontSize = cfg.fontSize;
-      if (cfg.scrollback) tab.terminal.options.scrollback = cfg.scrollback;
-      requestAnimationFrame(() => fitTerminal(tab));
+      forEachPane(tab.root, (pane) => {
+        if (cfg.fontSize) pane.terminal.options.fontSize = cfg.fontSize;
+        if (cfg.scrollback) pane.terminal.options.scrollback = cfg.scrollback;
+      });
+      requestAnimationFrame(() => fitAllPanes(tab.root));
     } else if (tab.type === 'file' && cfg.fontSize && tab.editorView) {
       setEditorFontSize(tab.editorView, cfg.fontSize);
     }
@@ -102,19 +162,19 @@ export async function initTerminals() {
   // Listen for PTY output
   await listen('terminal-output', (event) => {
     const { id, data } = event.payload;
-    const tab = ptyToTab.get(id);
-    if (tab) {
-      tab.terminal.write(data);
+    const pane = ptyToPane.get(id);
+    if (pane) {
+      pane.terminal.write(data);
     }
   });
 
   // Listen for PTY exit
   await listen('terminal-exit', (event) => {
     const { id } = event.payload;
-    const tab = ptyToTab.get(id);
-    if (tab) {
-      tab.terminal.write('\r\n\x1b[90m[Process exited]\x1b[0m\r\n');
-      tab.exited = true;
+    const pane = ptyToPane.get(id);
+    if (pane) {
+      pane.terminal.write('\r\n\x1b[90m[Process exited]\x1b[0m\r\n');
+      pane.exited = true;
     }
   });
 
@@ -143,30 +203,309 @@ export async function initTerminals() {
       e.preventDefault();
       switchToNextTab(-1);
     }
+    // Ctrl+Shift+D — Split terminal horizontal (side-by-side)
+    if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+      e.preventDefault();
+      const tab = tabs.find(t => t.id === activeTabId);
+      if (tab?.type === 'terminal') splitActivePane('horizontal');
+    }
+    // Ctrl+Shift+E — Split terminal vertical (top-bottom)
+    if (e.ctrlKey && e.shiftKey && e.key === 'E') {
+      e.preventDefault();
+      const tab = tabs.find(t => t.id === activeTabId);
+      if (tab?.type === 'terminal') splitActivePane('vertical');
+    }
   });
 
   // Resize observer
   const resizeObserver = new ResizeObserver(() => {
     const tab = tabs.find(t => t.id === activeTabId);
-    if (tab && tab.type === 'terminal') fitTerminal(tab);
+    if (tab && tab.type === 'terminal') fitAllPanes(tab.root);
   });
   resizeObserver.observe(terminalContainer);
+}
+
+// ── Pane creation ──
+
+async function createPane(cwd) {
+  const shell = terminalConfig.shell || undefined;
+  const ptyId = await invoke('spawn_terminal', { shell, cwd });
+
+  const terminal = new Terminal({
+    theme: TERMINAL_THEME,
+    fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Menlo', 'Consolas', 'Liberation Mono', monospace",
+    fontSize: terminalConfig.fontSize,
+    scrollback: terminalConfig.scrollback,
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    allowProposedApi: true,
+  });
+
+  const fitAddon = new FitAddon();
+  terminal.loadAddon(fitAddon);
+  terminal.loadAddon(new WebLinksAddon((_event, url) => {
+    invoke('open_url', { url }).catch(e => console.warn('Failed to open URL:', e));
+  }));
+  const searchAddon = new SearchAddon();
+  terminal.loadAddon(searchAddon);
+  terminal.registerLinkProvider(createFilePathLinkProvider(terminal));
+
+  const paneWrapper = document.createElement('div');
+  paneWrapper.className = 'pane-wrapper';
+
+  const { searchBar, searchInput } = createSearchBar(searchAddon, terminal);
+  paneWrapper.appendChild(searchBar);
+
+  terminal.open(paneWrapper);
+
+  // Key handler: bubble up combos to global handler
+  terminal.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    if (e.ctrlKey && e.key === 'Tab') return false;
+    if (e.ctrlKey && e.shiftKey && ['T', 'W', 'F', 'O', 'D', 'E'].includes(e.key)) return false;
+    if (e.ctrlKey && !e.shiftKey && e.key === 'f') return false;
+
+    if (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === 'Enter') {
+      e.preventDefault();
+      invoke('write_terminal', { id: pane.ptyId, data: '\x1b\n' }).catch(e => console.warn('Failed to write terminal:', e));
+      return false;
+    }
+
+    if (e.ctrlKey && !e.shiftKey && e.key === 'c') {
+      if (terminal.hasSelection()) {
+        navigator.clipboard.writeText(terminal.getSelection());
+        terminal.clearSelection();
+        return false;
+      }
+      return true;
+    }
+
+    if (e.ctrlKey && !e.shiftKey && e.key === 'Backspace') {
+      let seq;
+      if (IS_WINDOWS) {
+        const vtApp = terminal.modes.bracketedPasteMode;
+        seq = vtApp ? '\x1b\x7f' : '\x1b[8;14;127;1;8;1_';
+      } else {
+        seq = '\x1b\x7f';
+      }
+      invoke('write_terminal', { id: pane.ptyId, data: seq }).catch(e => console.warn('Failed to write terminal:', e));
+      return false;
+    }
+
+    if (e.ctrlKey && !e.shiftKey && e.key === 'v') {
+      e.preventDefault();
+      navigator.clipboard.readText().then((text) => {
+        if (text) invoke('write_terminal', { id: pane.ptyId, data: text }).catch(e => console.warn('Failed to write terminal:', e));
+      }).catch(e => console.warn('Failed to read clipboard:', e));
+      return false;
+    }
+
+    return true;
+  });
+
+  terminal.onData((data) => {
+    invoke('write_terminal', { id: pane.ptyId, data }).catch(() => {});
+  });
+
+  const pane = {
+    id: nextPaneId(),
+    ptyId,
+    terminal,
+    fitAddon,
+    searchAddon,
+    searchBar,
+    searchInput,
+    wrapper: paneWrapper,
+    exited: false,
+    name: null, // set by OSC title
+  };
+
+  terminal.onTitleChange((title) => {
+    if (!title) return;
+    const clean = title.split(/[\\/]/).pop().replace(/\.exe$/i, '');
+    pane.name = clean || title;
+    // Update tab name if this is the active pane
+    const tab = tabs.find(t => t.type === 'terminal' && t.activePaneId === pane.id);
+    if (tab) {
+      tab.name = pane.name;
+      renderTabs();
+    }
+  });
+
+  ptyToPane.set(ptyId, pane);
+  return pane;
+}
+
+// ── Pane tree DOM rendering ──
+
+function renderPaneTree(node, container, tab) {
+  if (isPane(node)) {
+    node.wrapper.classList.toggle('pane-active', node.id === tab.activePaneId);
+    // Only attach the focus handler once per pane (guard with a flag)
+    if (!node._focusHandlerAttached) {
+      node._focusHandlerAttached = true;
+      node.wrapper.addEventListener('mousedown', () => {
+        if (tab.activePaneId !== node.id) {
+          tab.activePaneId = node.id;
+          tab.name = node.name || tab.name;
+          tab.wrapper.querySelectorAll('.pane-wrapper').forEach(el => el.classList.remove('pane-active'));
+          node.wrapper.classList.add('pane-active');
+          node.terminal.focus();
+          renderTabs();
+        }
+      });
+    }
+    container.appendChild(node.wrapper);
+    return;
+  }
+
+  const splitEl = document.createElement('div');
+  splitEl.className = `split-container split-${node.direction}`;
+
+  const firstChild = document.createElement('div');
+  firstChild.className = 'split-child';
+  firstChild.style.flex = String(node.ratio);
+
+  const divider = document.createElement('div');
+  divider.className = `split-divider split-divider-${node.direction === 'horizontal' ? 'h' : 'v'}`;
+
+  const secondChild = document.createElement('div');
+  secondChild.className = 'split-child';
+  secondChild.style.flex = String(1 - node.ratio);
+
+  renderPaneTree(node.children[0], firstChild, tab);
+  renderPaneTree(node.children[1], secondChild, tab);
+
+  // Divider drag-resize
+  initDividerDrag(divider, firstChild, secondChild, node, tab);
+
+  splitEl.appendChild(firstChild);
+  splitEl.appendChild(divider);
+  splitEl.appendChild(secondChild);
+  container.appendChild(splitEl);
+}
+
+function initDividerDrag(divider, firstChild, secondChild, splitNode, tab) {
+  divider.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const isHorizontal = splitNode.direction === 'horizontal';
+    const container = divider.parentElement;
+    const startPos = isHorizontal ? e.clientX : e.clientY;
+    const containerSize = isHorizontal ? container.offsetWidth : container.offsetHeight;
+    const startRatio = splitNode.ratio;
+
+    document.body.style.cursor = isHorizontal ? 'col-resize' : 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMouseMove = (e) => {
+      const currentPos = isHorizontal ? e.clientX : e.clientY;
+      const delta = (currentPos - startPos) / containerSize;
+      const newRatio = Math.max(0.1, Math.min(0.9, startRatio + delta));
+      splitNode.ratio = newRatio;
+      firstChild.style.flex = String(newRatio);
+      secondChild.style.flex = String(1 - newRatio);
+      fitAllPanes(tab.root);
+    };
+
+    const onMouseUp = () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      fitAllPanes(tab.root);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+}
+
+function rebuildTabDOM(tab) {
+  // Remove all children except the tab wrapper itself
+  while (tab.wrapper.firstChild) tab.wrapper.firstChild.remove();
+  renderPaneTree(tab.root, tab.wrapper, tab);
+  requestAnimationFrame(() => fitAllPanes(tab.root));
+}
+
+// ── Split and close panes ──
+
+export async function splitActivePane(direction) {
+  const tab = tabs.find(t => t.id === activeTabId);
+  if (!tab || tab.type !== 'terminal') return;
+
+  const activePane = getActivePaneOfTab(tab);
+  if (!activePane || activePane.exited) return;
+
+  const cwd = getCurrentFolder() || undefined;
+  let newPane;
+  try {
+    newPane = await createPane(cwd);
+  } catch (err) {
+    console.error('Failed to spawn split terminal:', err);
+    return;
+  }
+
+  const splitNode = {
+    direction,
+    children: [activePane, newPane],
+    ratio: 0.5,
+  };
+
+  tab.root = replacePaneInTree(tab.root, activePane.id, splitNode);
+  tab.activePaneId = newPane.id;
+  tab.name = newPane.name || tab.name;
+
+  rebuildTabDOM(tab);
+  newPane.terminal.focus();
+  renderTabs();
+}
+
+export async function closePaneById(paneId) {
+  const tab = tabs.find(t => t.type === 'terminal' && findPane(t.root, paneId));
+  if (!tab) return;
+
+  const pane = findPane(tab.root, paneId);
+  if (!pane) return;
+
+  // Kill PTY
+  if (!pane.exited) {
+    try { await invoke('kill_terminal', { id: pane.ptyId }); } catch (e) { console.warn('Failed to kill terminal:', e); }
+  }
+  ptyToPane.delete(pane.ptyId);
+  pane.terminal.dispose();
+
+  const newRoot = removePaneFromTree(tab.root, paneId);
+  if (!newRoot) {
+    // Last pane closed — close the whole tab
+    closeTab(tab.id);
+    return;
+  }
+
+  tab.root = newRoot;
+  if (tab.activePaneId === paneId) {
+    const fallback = firstPane(tab.root);
+    tab.activePaneId = fallback ? fallback.id : null;
+    tab.name = fallback?.name || tab.name;
+  }
+
+  rebuildTabDOM(tab);
+  const activeP = getActivePaneOfTab(tab);
+  if (activeP) activeP.terminal.focus();
+  renderTabs();
 }
 
 export async function createTerminalTab() {
   tabCounter++;
   const tabId = `tab-${tabCounter}`;
   const name = `Terminal ${tabCounter}`;
-
-  // Spawn PTY
   const cwd = getCurrentFolder() || undefined;
-  const shell = terminalConfig.shell || undefined;
-  let ptyId;
+
+  let pane;
   try {
-    ptyId = await invoke('spawn_terminal', { shell, cwd });
+    pane = await createPane(cwd);
   } catch (err) {
     console.error('Failed to spawn terminal:', err);
-    // Show error in a temporary terminal wrapper
     const wrapper = document.createElement('div');
     wrapper.className = 'terminal-wrapper active';
     wrapper.id = `tab-err-${tabCounter}`;
@@ -195,119 +534,27 @@ export async function createTerminalTab() {
     return;
   }
 
-  // Create xterm instance
-  const terminal = new Terminal({
-    theme: TERMINAL_THEME,
-    fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Menlo', 'Consolas', 'Liberation Mono', monospace",
-    fontSize: terminalConfig.fontSize,
-    scrollback: terminalConfig.scrollback,
-    cursorBlink: true,
-    cursorStyle: 'bar',
-    allowProposedApi: true,
-  });
-
-  const fitAddon = new FitAddon();
-  terminal.loadAddon(fitAddon);
-  terminal.loadAddon(new WebLinksAddon((_event, url) => {
-    invoke('open_url', { url }).catch(e => console.warn('Failed to open URL:', e));
-  }));
-  terminal.registerLinkProvider(createFilePathLinkProvider(terminal));
-
-  // Terminal wrapper element
   const wrapper = document.createElement('div');
   wrapper.className = 'terminal-wrapper';
   wrapper.id = tabId;
   terminalContainer.appendChild(wrapper);
 
-  terminal.open(wrapper);
+  const tab = {
+    id: tabId,
+    type: 'terminal',
+    name,
+    root: pane,
+    activePaneId: pane.id,
+    wrapper,
+  };
 
-  // Let specific combos bubble up to our global keydown handler
-  // instead of being swallowed by xterm.js.
-  // Ctrl+C: copy if selection exists, otherwise let xterm send SIGINT.
-  // Ctrl+V: paste from clipboard.
-  terminal.attachCustomKeyEventHandler((e) => {
-    if (e.type !== 'keydown') return true;
-    if (e.ctrlKey && e.key === 'Tab') return false;
-    if (e.ctrlKey && e.shiftKey && ['T', 'W', 'F', 'O'].includes(e.key)) return false;
-
-    // Shift+Enter — send ESC + newline so apps like Claude Code can
-    // distinguish it from plain Enter.  e.preventDefault() is critical:
-    // Enter fires an `input` event on xterm's hidden textarea (separate
-    // from keydown), which would send an extra \r via onData.
-    if (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === 'Enter') {
-      e.preventDefault();
-      invoke('write_terminal', { id: ptyId, data: '\x1b\n' }).catch(e => console.warn('Failed to write terminal:', e));
-      return false;
-    }
-
-    // Ctrl+C — copy selection (if any), otherwise let SIGINT through
-    if (e.ctrlKey && !e.shiftKey && e.key === 'c') {
-      if (terminal.hasSelection()) {
-        navigator.clipboard.writeText(terminal.getSelection());
-        terminal.clearSelection();
-        return false; // prevent xterm from sending SIGINT
-      }
-      return true; // no selection → normal SIGINT
-    }
-
-    // Ctrl+Backspace — delete previous word
-    if (e.ctrlKey && !e.shiftKey && e.key === 'Backspace') {
-      let seq;
-      if (IS_WINDOWS) {
-        // ConPTY has two input processing modes depending on the child:
-        // - Standard (PSReadLine): translates VT → INPUT_RECORDs. Standard VT
-        //   can't encode Ctrl+Backspace, so we use win32-input-mode CSI format.
-        // - VT passthrough (Claude Code, vim, etc.): child enables
-        //   ENABLE_VIRTUAL_TERMINAL_INPUT, ConPTY passes bytes through directly.
-        //   Standard ESC+DEL works here.
-        // Detection: VT-aware apps enable bracketed paste mode (?2004h).
-        // PSReadLine on Windows never does (confirmed, no support as of v2.4.5).
-        const vtApp = terminal.modes.bracketedPasteMode;
-        seq = vtApp ? '\x1b\x7f' : '\x1b[8;14;127;1;8;1_';
-      } else {
-        seq = '\x1b\x7f';
-      }
-      invoke('write_terminal', { id: ptyId, data: seq }).catch(e => console.warn('Failed to write terminal:', e));
-      return false;
-    }
-
-    // Ctrl+V — paste from clipboard
-    if (e.ctrlKey && !e.shiftKey && e.key === 'v') {
-      e.preventDefault(); // block browser paste event (xterm listens for it too)
-      navigator.clipboard.readText().then((text) => {
-        if (text) invoke('write_terminal', { id: ptyId, data: text }).catch(e => console.warn('Failed to write terminal:', e));
-      }).catch(e => console.warn('Failed to read clipboard:', e));
-      return false;
-    }
-
-    return true;
-  });
-
-  // Handle terminal input → PTY
-  terminal.onData((data) => {
-    invoke('write_terminal', { id: ptyId, data }).catch(() => {});
-  });
-
-  const tab = { id: tabId, type: 'terminal', name, ptyId, terminal, fitAddon, wrapper, exited: false };
-
-  // Dynamic tab title from shell OSC sequences
-  terminal.onTitleChange((title) => {
-    if (title && tab.type === 'terminal') {
-      // Clean up: show just the executable name or last path segment
-      const clean = title.split(/[\\/]/).pop().replace(/\.exe$/i, '');
-      tab.name = clean || title;
-      renderTabs();
-    }
-  });
+  renderPaneTree(pane, wrapper, tab);
 
   tabs.push(tab);
-  ptyToTab.set(ptyId, tab);
-
   renderTabs();
   activateTab(tabId);
 
-  // Fit after a brief delay to ensure DOM is ready
-  requestAnimationFrame(() => fitTerminal(tab));
+  requestAnimationFrame(() => fitAllPanes(tab.root));
 }
 
 // Mouse-based drag reorder (HTML5 drag-drop is unreliable in webviews)
@@ -427,6 +674,17 @@ function renderTabs() {
 
     nameSpan.appendChild(document.createTextNode(tab.name));
 
+    // Pane count badge for split terminals
+    if (tab.type === 'terminal') {
+      const pc = countPanes(tab.root);
+      if (pc > 1) {
+        const badge = document.createElement('span');
+        badge.className = 'tab-pane-count';
+        badge.textContent = `[${pc}]`;
+        nameSpan.appendChild(badge);
+      }
+    }
+
     const closeBtn = document.createElement('button');
     closeBtn.className = 'tab-close';
     closeBtn.textContent = '\u00D7';
@@ -497,8 +755,9 @@ function activateTab(tabId) {
   const tab = tabs.find(t => t.id === tabId);
   if (tab) {
     if (tab.type === 'terminal') {
-      tab.terminal.focus();
-      requestAnimationFrame(() => fitTerminal(tab));
+      const pane = getActivePaneOfTab(tab);
+      if (pane) pane.terminal.focus();
+      requestAnimationFrame(() => fitAllPanes(tab.root));
     } else if (tab.type === 'file' && tab.editorView) {
       tab.editorView.focus();
     }
@@ -513,14 +772,16 @@ async function closeTab(tabId) {
   const tab = tabs[idx];
 
   if (tab.type === 'terminal') {
-    // Kill PTY if still running
-    if (!tab.exited) {
-      try {
-        await invoke('kill_terminal', { id: tab.ptyId });
-      } catch (e) { console.warn('Failed to kill terminal:', e); }
-    }
-    ptyToTab.delete(tab.ptyId);
-    tab.terminal.dispose();
+    // Kill all PTYs in the pane tree
+    const killPromises = [];
+    forEachPane(tab.root, (pane) => {
+      if (!pane.exited) {
+        killPromises.push(invoke('kill_terminal', { id: pane.ptyId }).catch(e => console.warn('Failed to kill terminal:', e)));
+      }
+      ptyToPane.delete(pane.ptyId);
+      pane.terminal.dispose();
+    });
+    await Promise.all(killPromises);
   } else if (tab.type === 'file') {
     // Confirm if unsaved
     if (tab.modified) {
@@ -568,7 +829,13 @@ function switchToNextTab(direction) {
 }
 
 export function getActiveTerminalCount() {
-  return tabs.filter(t => t.type === 'terminal' && !t.exited).length;
+  let count = 0;
+  for (const tab of tabs) {
+    if (tab.type === 'terminal') {
+      forEachPane(tab.root, (pane) => { if (!pane.exited) count++; });
+    }
+  }
+  return count;
 }
 
 export function getAllTabs() {
@@ -578,11 +845,13 @@ export function getAllTabs() {
 export async function closeAllTabs() {
   for (const tab of tabs) {
     if (tab.type === 'terminal') {
-      if (!tab.exited) {
-        try { await invoke('kill_terminal', { id: tab.ptyId }); } catch (e) { console.warn('Failed to kill terminal:', e); }
-      }
-      ptyToTab.delete(tab.ptyId);
-      tab.terminal.dispose();
+      forEachPane(tab.root, (pane) => {
+        if (!pane.exited) {
+          invoke('kill_terminal', { id: pane.ptyId }).catch(e => console.warn('Failed to kill terminal:', e));
+        }
+        ptyToPane.delete(pane.ptyId);
+        pane.terminal.dispose();
+      });
     } else if (tab.type === 'file') {
       if (tab.editorView) tab.editorView.destroy();
       if (tabCloseCallback) tabCloseCallback(tab);
@@ -733,16 +1002,156 @@ function createFilePathLinkProvider(term) {
   };
 }
 
-function fitTerminal(tab) {
-  try {
-    tab.fitAddon.fit();
-    const dims = tab.fitAddon.proposeDimensions();
-    if (dims && dims.cols && dims.rows) {
-      invoke('resize_terminal', {
-        id: tab.ptyId,
-        cols: dims.cols,
-        rows: dims.rows,
-      }).catch(() => {});
+// ── Terminal search bar ──
+
+const SEARCH_DECORATIONS = {
+  matchBackground: 'rgba(240, 200, 0, 0.25)',
+  matchBorder: 'rgba(240, 200, 0, 0.5)',
+  matchOverviewRuler: 'rgba(240, 200, 0, 0.6)',
+  activeMatchBackground: 'rgba(180, 93, 255, 0.35)',
+  activeMatchBorder: 'rgba(180, 93, 255, 0.7)',
+  activeMatchColorOverviewRuler: 'rgba(180, 93, 255, 0.8)',
+};
+
+function createSearchBar(searchAddon, terminal) {
+  const bar = document.createElement('div');
+  bar.className = 'terminal-search-bar hidden';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'terminal-search-input';
+  input.placeholder = 'Find...';
+
+  const count = document.createElement('span');
+  count.className = 'terminal-search-count';
+
+  const prevBtn = document.createElement('button');
+  prevBtn.className = 'terminal-search-btn';
+  prevBtn.innerHTML = '&#x2191;';
+  prevBtn.title = 'Previous (Shift+Enter)';
+
+  const nextBtn = document.createElement('button');
+  nextBtn.className = 'terminal-search-btn';
+  nextBtn.innerHTML = '&#x2193;';
+  nextBtn.title = 'Next (Enter)';
+
+  const caseBtn = document.createElement('button');
+  caseBtn.className = 'terminal-search-toggle';
+  caseBtn.textContent = 'Aa';
+  caseBtn.title = 'Case Sensitive';
+
+  const regexBtn = document.createElement('button');
+  regexBtn.className = 'terminal-search-toggle';
+  regexBtn.textContent = '.*';
+  regexBtn.title = 'Regex';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'terminal-search-close';
+  closeBtn.innerHTML = '&times;';
+  closeBtn.title = 'Close (Esc)';
+
+  bar.appendChild(input);
+  bar.appendChild(count);
+  bar.appendChild(prevBtn);
+  bar.appendChild(nextBtn);
+  bar.appendChild(caseBtn);
+  bar.appendChild(regexBtn);
+  bar.appendChild(closeBtn);
+
+  let caseSensitive = false;
+  let useRegex = false;
+
+  function getOptions(incremental = false) {
+    return { caseSensitive, regex: useRegex, incremental, decorations: SEARCH_DECORATIONS };
+  }
+
+  function doSearch() {
+    const term = input.value;
+    if (!term) { searchAddon.clearDecorations(); count.textContent = ''; return; }
+    searchAddon.findNext(term, getOptions(true));
+  }
+
+  input.addEventListener('input', doSearch);
+
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const term = input.value;
+      if (!term) return;
+      if (e.shiftKey) searchAddon.findPrevious(term, getOptions());
+      else searchAddon.findNext(term, getOptions());
     }
-  } catch { /* terminal not ready yet */ }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      hideSearch();
+    }
+  });
+
+  prevBtn.addEventListener('click', () => {
+    const term = input.value;
+    if (term) searchAddon.findPrevious(term, getOptions());
+  });
+
+  nextBtn.addEventListener('click', () => {
+    const term = input.value;
+    if (term) searchAddon.findNext(term, getOptions());
+  });
+
+  caseBtn.addEventListener('click', () => {
+    caseSensitive = !caseSensitive;
+    caseBtn.classList.toggle('active', caseSensitive);
+    doSearch();
+  });
+
+  regexBtn.addEventListener('click', () => {
+    useRegex = !useRegex;
+    regexBtn.classList.toggle('active', useRegex);
+    doSearch();
+  });
+
+  function hideSearch() {
+    bar.classList.add('hidden');
+    searchAddon.clearDecorations();
+    count.textContent = '';
+    terminal.focus();
+  }
+
+  closeBtn.addEventListener('click', hideSearch);
+
+  searchAddon.onDidChangeResults((e) => {
+    if (e === undefined) { count.textContent = ''; return; }
+    if (e.resultCount === 0) { count.textContent = 'No results'; return; }
+    count.textContent = `${e.resultIndex + 1} of ${e.resultCount}`;
+  });
+
+  return { searchBar: bar, searchInput: input };
+}
+
+export function showTerminalSearch(tab) {
+  if (!tab || tab.type !== 'terminal') return;
+  const pane = getActivePaneOfTab(tab);
+  if (!pane) return;
+  pane.searchBar.classList.remove('hidden');
+  pane.searchInput.focus();
+  pane.searchInput.select();
+}
+
+function fitAllPanes(node) {
+  if (!node) return;
+  if (isPane(node)) {
+    try {
+      node.fitAddon.fit();
+      const dims = node.fitAddon.proposeDimensions();
+      if (dims && dims.cols && dims.rows) {
+        invoke('resize_terminal', {
+          id: node.ptyId,
+          cols: dims.cols,
+          rows: dims.rows,
+        }).catch(() => {});
+      }
+    } catch { /* terminal not ready yet */ }
+    return;
+  }
+  for (const child of node.children) fitAllPanes(child);
 }

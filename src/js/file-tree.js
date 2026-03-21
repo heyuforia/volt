@@ -24,6 +24,12 @@ let gitIgnoredSet = new Set();
 // Guard against concurrent loadDirectory calls (race condition → duplicate entries)
 let loadGeneration = 0;
 
+// Drag-and-drop state
+let treeDragState = null;
+let treeDragGhost = null;
+let autoExpandTimer = null;
+let lastHoveredDir = null;
+
 // Material icon theme manifest for file/folder icon resolution
 const iconManifest = generateManifest();
 const ICON_BASE = import.meta.env.DEV
@@ -427,6 +433,7 @@ function renderEntries(container, entries, depth) {
       // Context menu for directories
       item.addEventListener('contextmenu', (e) => showContextMenu(e, entry));
 
+      initTreeItemDrag(item, entry);
       container.appendChild(item);
       container.appendChild(children);
     } else {
@@ -437,9 +444,228 @@ function renderEntries(container, entries, depth) {
       });
       // Context menu for files
       item.addEventListener('contextmenu', (e) => showContextMenu(e, entry));
+      initTreeItemDrag(item, entry);
       container.appendChild(item);
     }
   }
+}
+
+// ── Tree item drag-and-drop (move files/folders) ──
+
+function initTreeItemDrag(item, entry) {
+  item.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    // Don't drag when file filter is active
+    if (fileSearch.value) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const threshold = 5;
+    let dragging = false;
+
+    const onMouseMove = (moveEvent) => {
+      if (!dragging) {
+        const dx = Math.abs(moveEvent.clientX - startX);
+        const dy = Math.abs(moveEvent.clientY - startY);
+        if (dx < threshold && dy < threshold) return;
+        dragging = true;
+        treeDragState = { sourcePath: entry.path, sourceName: entry.name, sourceIsDir: entry.is_dir };
+        item.classList.add('tree-dragging');
+        document.body.style.cursor = 'grabbing';
+        document.body.style.userSelect = 'none';
+
+        // Create ghost
+        treeDragGhost = document.createElement('div');
+        treeDragGhost.className = 'tree-drag-ghost';
+        const ghostImg = document.createElement('img');
+        ghostImg.src = entry.is_dir ? resolveFolderIcon(entry.name, false) : resolveFileIcon(entry.name);
+        treeDragGhost.appendChild(ghostImg);
+        treeDragGhost.appendChild(document.createTextNode(entry.name));
+        document.body.appendChild(treeDragGhost);
+      }
+
+      // Position ghost
+      if (treeDragGhost) {
+        treeDragGhost.style.left = `${moveEvent.clientX + 12}px`;
+        treeDragGhost.style.top = `${moveEvent.clientY + 12}px`;
+      }
+
+      // Find drop target
+      const elUnder = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+      if (!elUnder) return;
+      const targetItem = elUnder.closest('.tree-item[data-is-dir="true"]');
+
+      // Clear all previous drop targets
+      fileTreeEl.querySelectorAll('.tree-drop-target').forEach(el => el.classList.remove('tree-drop-target'));
+
+      if (targetItem && targetItem !== item) {
+        const targetPath = targetItem.dataset.path;
+
+        // Prevent circular move (dropping folder into its own descendant)
+        const sep = rootPath.includes('/') ? '/' : '\\';
+        if (entry.is_dir && (targetPath + sep).startsWith(entry.path + sep)) return;
+        if (targetPath === entry.path) return;
+
+        targetItem.classList.add('tree-drop-target');
+
+        // Auto-expand collapsed folder on hover
+        if (targetPath !== lastHoveredDir) {
+          lastHoveredDir = targetPath;
+          clearTimeout(autoExpandTimer);
+          autoExpandTimer = setTimeout(() => {
+            const chevron = targetItem.querySelector('.tree-chevron');
+            if (chevron && !chevron.classList.contains('expanded')) {
+              targetItem.click();
+            }
+          }, 600);
+        }
+      } else {
+        lastHoveredDir = null;
+        clearTimeout(autoExpandTimer);
+        // If hovering over file-tree background, root is the target
+        if (elUnder === fileTreeEl || elUnder.closest('#file-tree') === fileTreeEl) {
+          fileTreeEl.classList.add('tree-drop-target');
+        }
+      }
+    };
+
+    const onMouseUp = async (upEvent) => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      clearTimeout(autoExpandTimer);
+      lastHoveredDir = null;
+
+      if (!dragging) return;
+
+      // Clean up
+      item.classList.remove('tree-dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      if (treeDragGhost) { treeDragGhost.remove(); treeDragGhost = null; }
+      fileTreeEl.querySelectorAll('.tree-drop-target').forEach(el => el.classList.remove('tree-drop-target'));
+      fileTreeEl.classList.remove('tree-drop-target');
+
+      if (!treeDragState) return;
+
+      // Determine drop target folder
+      const elUnder = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
+      let targetFolderPath = null;
+
+      if (elUnder) {
+        const targetItem = elUnder.closest('.tree-item[data-is-dir="true"]');
+        if (targetItem && targetItem !== item) {
+          targetFolderPath = targetItem.dataset.path;
+        } else if (elUnder === fileTreeEl || elUnder.closest('#file-tree') === fileTreeEl) {
+          targetFolderPath = rootPath;
+        }
+      }
+
+      if (!targetFolderPath) { treeDragState = null; return; }
+
+      const sep = rootPath.includes('/') ? '/' : '\\';
+
+      // Prevent circular move
+      if (entry.is_dir && (targetFolderPath + sep).startsWith(entry.path + sep)) {
+        treeDragState = null;
+        return;
+      }
+
+      // Check if source parent is the same as target → no-op
+      const sourceParent = entry.path.replace(/[\\/][^\\/]+$/, '');
+      if (sourceParent === targetFolderPath) { treeDragState = null; return; }
+
+      const newPath = targetFolderPath + sep + entry.name;
+
+      // Check for name conflict
+      try {
+        const ignored = ignoredPatterns || undefined;
+        const targetEntries = await invoke('read_directory', { path: targetFolderPath, ignored });
+        const conflict = targetEntries.find(e => e.name.toLowerCase() === entry.name.toLowerCase());
+        if (conflict) {
+          const { confirm } = await import('@tauri-apps/plugin-dialog');
+          const confirmed = await confirm(
+            `"${entry.name}" already exists in the destination. Replace it?`,
+            { title: 'Volt', kind: 'warning' }
+          );
+          if (!confirmed) { treeDragState = null; return; }
+        }
+      } catch (err) { console.warn('Failed to check destination:', err); }
+
+      // Perform the move
+      try {
+        await invoke('rename_path', { oldPath: entry.path, newPath });
+        if (onFileRenamed) onFileRenamed(entry.path, newPath, entry.name, entry.is_dir);
+        await refreshTree();
+        const targetName = targetFolderPath.split(/[\\/]/).pop();
+        showMoveUndoToast(entry.path, newPath, entry.name, targetName, entry.is_dir);
+      } catch (err) {
+        console.error('Failed to move:', err);
+      }
+
+      treeDragState = null;
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+}
+
+function showMoveUndoToast(oldPath, newPath, name, targetFolderName, isDir) {
+  if (activeToast) {
+    clearTimeout(toastTimer);
+    activeToast.element.remove();
+    activeToast = null;
+  }
+
+  const el = document.createElement('div');
+  el.className = 'undo-toast';
+
+  const msg = document.createElement('span');
+  msg.className = 'undo-toast-message';
+  msg.textContent = 'Moved ';
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'undo-toast-name';
+  nameEl.textContent = name;
+  msg.appendChild(nameEl);
+
+  msg.appendChild(document.createTextNode(' \u2192 '));
+
+  const destEl = document.createElement('span');
+  destEl.className = 'undo-toast-name';
+  destEl.textContent = targetFolderName;
+  msg.appendChild(destEl);
+
+  const undoBtn = document.createElement('button');
+  undoBtn.className = 'undo-toast-btn';
+  undoBtn.textContent = 'Undo';
+  undoBtn.addEventListener('click', async () => {
+    try {
+      await invoke('rename_path', { oldPath: newPath, newPath: oldPath });
+      if (onFileRenamed) onFileRenamed(newPath, oldPath, name, isDir);
+      await refreshTree();
+    } catch (err) {
+      console.error('Undo move failed:', err);
+    }
+    dismissToast();
+  });
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'undo-toast-dismiss';
+  closeBtn.textContent = '\u00d7';
+  closeBtn.addEventListener('click', dismissToast);
+
+  const timer = document.createElement('div');
+  timer.className = 'undo-toast-timer';
+
+  el.appendChild(msg);
+  el.appendChild(undoBtn);
+  el.appendChild(closeBtn);
+  el.appendChild(timer);
+  document.body.appendChild(el);
+
+  activeToast = { element: el };
+  toastTimer = setTimeout(dismissToast, 5000);
 }
 
 // ── Inline prompt ──
