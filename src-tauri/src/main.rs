@@ -13,16 +13,6 @@ mod system;
 mod watcher;
 
 fn main() {
-    // Per-folder single instance: if another Volt process already has our
-    // last folder open, focus that window and exit before ours even appears.
-    if let Ok(cfg) = config::load_config() {
-        if let Some(ref folder) = cfg.last_folder {
-            if instance::try_focus_existing(folder) {
-                std::process::exit(0);
-            }
-        }
-    }
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
