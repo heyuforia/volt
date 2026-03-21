@@ -344,7 +344,9 @@ function renderPaneTree(node, container, tab) {
     // Only attach the focus handler once per pane (guard with a flag)
     if (!node._focusHandlerAttached) {
       node._focusHandlerAttached = true;
-      node.wrapper.addEventListener('mousedown', () => {
+      node.wrapper.addEventListener('mousedown', (e) => {
+        // Ignore clicks on the pane toolbar buttons
+        if (e.target.closest('.pane-toolbar')) return;
         if (tab.activePaneId !== node.id) {
           tab.activePaneId = node.id;
           tab.name = node.name || tab.name;
@@ -355,6 +357,36 @@ function renderPaneTree(node, container, tab) {
         }
       });
     }
+
+    // Add/remove pane toolbar (close + drag-out buttons) based on split state
+    const isSplit = !isPane(tab.root);
+    let toolbar = node.wrapper.querySelector('.pane-toolbar');
+    if (isSplit && !toolbar) {
+      toolbar = document.createElement('div');
+      toolbar.className = 'pane-toolbar';
+
+      const dragHandle = document.createElement('button');
+      dragHandle.className = 'pane-toolbar-btn pane-drag-handle';
+      dragHandle.title = 'Drag to extract to own tab';
+      dragHandle.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4h2v2H4zM4 7h2v2H4zM4 10h2v2H4zM10 4h2v2h-2zM10 7h2v2h-2zM10 10h2v2h-2z" fill="currentColor"/></svg>';
+      initPaneDragOut(dragHandle, node, tab);
+
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'pane-toolbar-btn pane-close-btn';
+      closeBtn.title = 'Close pane';
+      closeBtn.innerHTML = '&times;';
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closePaneById(node.id);
+      });
+
+      toolbar.appendChild(dragHandle);
+      toolbar.appendChild(closeBtn);
+      node.wrapper.appendChild(toolbar);
+    } else if (!isSplit && toolbar) {
+      toolbar.remove();
+    }
+
     container.appendChild(node.wrapper);
     return;
   }
@@ -426,6 +458,125 @@ function rebuildTabDOM(tab) {
   while (tab.wrapper.firstChild) tab.wrapper.firstChild.remove();
   renderPaneTree(tab.root, tab.wrapper, tab);
   requestAnimationFrame(() => fitAllPanes(tab.root));
+}
+
+// ── Pane drag-out (extract split pane to its own tab) ──
+
+function initPaneDragOut(handle, pane, tab) {
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (countPanes(tab.root) < 2) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const threshold = 20;
+    let dragging = false;
+    let ghost = null;
+
+    const onMouseMove = (moveEvent) => {
+      const dx = Math.abs(moveEvent.clientX - startX);
+      const dy = Math.abs(moveEvent.clientY - startY);
+      if (!dragging && (dx > threshold || dy > threshold)) {
+        dragging = true;
+        ghost = document.createElement('div');
+        ghost.className = 'tree-drag-ghost';
+        ghost.textContent = pane.name || 'Terminal';
+        document.body.appendChild(ghost);
+        document.body.style.cursor = 'grabbing';
+        document.body.style.userSelect = 'none';
+      }
+      if (ghost) {
+        ghost.style.left = `${moveEvent.clientX + 12}px`;
+        ghost.style.top = `${moveEvent.clientY + 12}px`;
+      }
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      if (ghost) { ghost.remove(); ghost = null; }
+      if (!dragging) return;
+
+      extractPaneToTab(pane, tab);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+}
+
+function extractPaneToTab(pane, sourceTab) {
+  // Remove pane from source tab's tree (without killing PTY)
+  const newRoot = removePaneFromTree(sourceTab.root, pane.id);
+  if (!newRoot) return; // shouldn't happen — we checked countPanes >= 2
+
+  sourceTab.root = newRoot;
+  if (sourceTab.activePaneId === pane.id) {
+    const fallback = firstPane(sourceTab.root);
+    sourceTab.activePaneId = fallback ? fallback.id : null;
+    sourceTab.name = fallback?.name || sourceTab.name;
+  }
+  rebuildTabDOM(sourceTab);
+
+  // Create a new tab for this pane
+  tabCounter++;
+  const tabId = `tab-${tabCounter}`;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'terminal-wrapper';
+  wrapper.id = tabId;
+  terminalContainer.appendChild(wrapper);
+
+  const newTab = {
+    id: tabId,
+    type: 'terminal',
+    name: pane.name || `Terminal ${tabCounter}`,
+    root: pane,
+    activePaneId: pane.id,
+    wrapper,
+  };
+
+  // Remove old pane toolbar since it's now a single pane
+  const toolbar = pane.wrapper.querySelector('.pane-toolbar');
+  if (toolbar) toolbar.remove();
+
+  renderPaneTree(pane, wrapper, newTab);
+
+  tabs.push(newTab);
+  renderTabs();
+  activateTab(tabId);
+  requestAnimationFrame(() => fitAllPanes(newTab.root));
+}
+
+// ── Merge tab into another (drag tab onto terminal tab to split) ──
+
+function mergeTabInto(sourceTab, targetTab, direction) {
+  if (sourceTab.type !== 'terminal' || targetTab.type !== 'terminal') return;
+  if (sourceTab.id === targetTab.id) return;
+
+  // Remove source tab from tabs array
+  const srcIdx = tabs.findIndex(t => t.id === sourceTab.id);
+  if (srcIdx === -1) return;
+  sourceTab.wrapper.remove();
+  tabs.splice(srcIdx, 1);
+
+  // Merge source's pane tree into target
+  const splitNode = {
+    direction,
+    children: [targetTab.root, sourceTab.root],
+    ratio: 0.5,
+  };
+  targetTab.root = splitNode;
+  // Keep target's active pane; set name from active pane
+  const activeP = getActivePaneOfTab(targetTab);
+  if (activeP) targetTab.name = activeP.name || targetTab.name;
+
+  rebuildTabDOM(targetTab);
+  renderTabs();
+  activateTab(targetTab.id);
 }
 
 // ── Split and close panes ──
@@ -583,13 +734,19 @@ function initTabDrag(tabEl, tab) {
 
       // Find which tab we're hovering over
       tabList.querySelectorAll('.tab').forEach(el => {
-        el.classList.remove('drag-over-left', 'drag-over-right');
+        el.classList.remove('drag-over-left', 'drag-over-right', 'drag-over-merge');
         if (el.dataset.tabId === tab.id) return;
         const rect = el.getBoundingClientRect();
         if (e.clientX >= rect.left && e.clientX <= rect.right) {
-          const midX = rect.left + rect.width / 2;
-          el.classList.toggle('drag-over-left', e.clientX < midX);
-          el.classList.toggle('drag-over-right', e.clientX >= midX);
+          // If both are terminal tabs and holding Shift, show merge indicator
+          const targetTab = tabs.find(t => t.id === el.dataset.tabId);
+          if (e.shiftKey && tab.type === 'terminal' && targetTab?.type === 'terminal') {
+            el.classList.add('drag-over-merge');
+          } else {
+            const midX = rect.left + rect.width / 2;
+            el.classList.toggle('drag-over-left', e.clientX < midX);
+            el.classList.toggle('drag-over-right', e.clientX >= midX);
+          }
         }
       });
     };
@@ -611,19 +768,27 @@ function initTabDrag(tabEl, tab) {
         return e.clientX >= rect.left && e.clientX <= rect.right;
       });
 
-      tabList.querySelectorAll('.tab').forEach(el => el.classList.remove('drag-over-left', 'drag-over-right'));
+      tabList.querySelectorAll('.tab').forEach(el => el.classList.remove('drag-over-left', 'drag-over-right', 'drag-over-merge'));
 
       if (targetEl) {
-        const fromIdx = tabs.findIndex(t => t.id === tab.id);
         const targetTabId = targetEl.dataset.tabId;
-        const rect = targetEl.getBoundingClientRect();
-        const midX = rect.left + rect.width / 2;
+        const targetTab = tabs.find(t => t.id === targetTabId);
 
-        const [moved] = tabs.splice(fromIdx, 1);
-        let insertIdx = tabs.findIndex(t => t.id === targetTabId);
-        if (e.clientX >= midX) insertIdx++;
-        tabs.splice(insertIdx, 0, moved);
-        renderTabs();
+        // Shift+drop terminal onto terminal → merge into split
+        if (e.shiftKey && tab.type === 'terminal' && targetTab?.type === 'terminal') {
+          mergeTabInto(tab, targetTab, 'horizontal');
+        } else {
+          // Normal reorder
+          const fromIdx = tabs.findIndex(t => t.id === tab.id);
+          const rect = targetEl.getBoundingClientRect();
+          const midX = rect.left + rect.width / 2;
+
+          const [moved] = tabs.splice(fromIdx, 1);
+          let insertIdx = tabs.findIndex(t => t.id === targetTabId);
+          if (e.clientX >= midX) insertIdx++;
+          tabs.splice(insertIdx, 0, moved);
+          renderTabs();
+        }
       }
 
       dragState = null;

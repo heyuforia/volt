@@ -1023,8 +1023,20 @@ function renderRecents() {
     path.className = 'recents-path';
     path.textContent = folder;
 
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'recents-remove';
+    removeBtn.textContent = '\u00d7';
+    removeBtn.title = 'Remove';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      config.recentFolders = config.recentFolders.filter(f => f !== folder);
+      saveConfigDebounced();
+      renderRecents();
+    });
+
     item.appendChild(name);
     item.appendChild(path);
+    item.appendChild(removeBtn);
     item.addEventListener('click', () => openFolder(folder));
     welcomeRecents.appendChild(item);
   }
