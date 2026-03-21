@@ -22,8 +22,10 @@ VSCode/VSCodium uses 300–800 MB of RAM by bundling Chromium and running hundre
 
 ## Features
 
-- **Multi-tab terminals** — split your workflow across multiple terminal sessions with drag-to-reorder tabs
-- **File tree** — sidebar with material file icons, search filter, lazy-loaded directories, git status indicators
+- **Multi-tab terminals** — multiple terminal sessions with drag-to-reorder tabs
+- **Split terminal panes** — split horizontally (`Ctrl+Shift+D`) or vertically (`Ctrl+Shift+E`), draggable dividers, click to focus
+- **Terminal search** — `Ctrl+F` to search terminal scrollback with highlighted matches, case sensitivity and regex toggles
+- **File tree** — sidebar with material file icons, search filter, lazy-loaded directories, git status indicators, drag-and-drop to move files/folders
 - **Code editor** — CodeMirror 6 with syntax highlighting for JS, TS, Rust, Python, Go, C, C++, Java, HTML, CSS, JSON, YAML, Markdown, Dart, TOML, Shell
 - **Markdown preview** — toggle between edit and rendered preview for `.md` files
 - **Dynamic tab names** — terminal tabs update to show the running process
@@ -37,10 +39,10 @@ VSCode/VSCodium uses 300–800 MB of RAM by bundling Chromium and running hundre
 - **Recent folders** — welcome screen shows last 5 opened projects for quick access
 - **Zoom** — `Ctrl+`/`Ctrl-` to adjust font size, `Ctrl+0` to reset
 - **Keyboard-driven** — full shortcut set for tabs, files, and navigation
-- **Drag and drop** — drop a folder to open it, drop a file to open it or paste its path into the active terminal
+- **Drag and drop** — drop a folder to open it, drop a file to open or paste its path into the terminal; drag files/folders in the tree to move them (with undo)
 - **LSP diagnostics** — auto-detects project language and shows errors/warnings in a resizable problems panel (Dart, Rust, Go, Python, C/C++, TypeScript)
 - **Flutter-aware** — auto-detects Flutter projects, provides emulator launcher (warm + cold boot)
-- **Single instance per folder** — opening a folder that's already open in another Volt window focuses that window instead
+- **Multi-instance** — run multiple Volt windows for different folders; opening the same folder in a second instance focuses the existing one
 - **Settings panel** — `Ctrl+,` opens settings UI with visual controls and a raw JSON editor
 - **Session persistence** — remembers window state, open tabs (files + terminals), cursor positions, and restores them per folder
 - **Cross-platform** — Windows, macOS, Linux
@@ -95,8 +97,10 @@ cargo tauri dev
 | `Ctrl+P` | Quick open file |
 | `Ctrl+S` | Save file |
 | `Ctrl+Shift+F` | Find in files |
-| `Ctrl+F` | Find in current file |
+| `Ctrl+F` | Search in terminal / Find in file |
 | `Ctrl+Shift+T` | New terminal |
+| `Ctrl+Shift+D` | Split terminal horizontally |
+| `Ctrl+Shift+E` | Split terminal vertically |
 | `Ctrl+Shift+W` | Close tab |
 | `Ctrl+C` | Copy selection in terminal (SIGINT if no selection) |
 | `Ctrl+V` | Paste into terminal |
