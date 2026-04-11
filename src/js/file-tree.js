@@ -577,6 +577,7 @@ function initTreeItemDrag(item, entry) {
       const newPath = targetFolderPath + sep + entry.name;
 
       // Check for name conflict
+      let forceOverwrite = false;
       try {
         const ignored = ignoredPatterns || undefined;
         const targetEntries = await invoke('read_directory', { path: targetFolderPath, ignored });
@@ -588,12 +589,13 @@ function initTreeItemDrag(item, entry) {
             { title: 'Volt', kind: 'warning' }
           );
           if (!confirmed) { treeDragState = null; return; }
+          forceOverwrite = true;
         }
       } catch (err) { console.warn('Failed to check destination:', err); }
 
       // Perform the move
       try {
-        await invoke('rename_path', { oldPath: entry.path, newPath });
+        await invoke('rename_path', { oldPath: entry.path, newPath, force: forceOverwrite });
         if (onFileRenamed) onFileRenamed(entry.path, newPath, entry.name, entry.is_dir);
         await refreshTree();
         const targetName = targetFolderPath.split(/[\\/]/).pop();
@@ -831,8 +833,30 @@ function showContextMenu(e, entry) {
       if (!newName || newName === entry.name) return;
       const dir = entry.path.replace(/[\\/][^\\/]+$/, '');
       const newPath = dir + sep + newName;
+      // Check for name conflict in the same directory. Compare the sibling
+      // by path (not by name) so case-only renames on Windows/macOS don't
+      // flag the file being renamed as a conflict against itself, while
+      // genuine collisions on case-sensitive filesystems still register.
+      let forceOverwrite = false;
       try {
-        await invoke('rename_path', { oldPath: entry.path, newPath });
+        const ignored = ignoredPatterns || undefined;
+        const siblings = await invoke('read_directory', { path: dir, ignored });
+        const conflict = siblings.find(e =>
+          e.name.toLowerCase() === newName.toLowerCase()
+          && e.path !== entry.path
+        );
+        if (conflict) {
+          const { confirm } = await import('@tauri-apps/plugin-dialog');
+          const confirmed = await confirm(
+            `"${newName}" already exists. Replace it?`,
+            { title: 'Volt', kind: 'warning' }
+          );
+          if (!confirmed) return;
+          forceOverwrite = true;
+        }
+      } catch (err) { console.warn('Failed to check for rename conflict:', err); }
+      try {
+        await invoke('rename_path', { oldPath: entry.path, newPath, force: forceOverwrite });
         if (onFileRenamed) onFileRenamed(entry.path, newPath, newName, entry.is_dir);
         await refreshTree();
         showUndoToast(entry.path, newPath, entry.name, newName, entry.is_dir);

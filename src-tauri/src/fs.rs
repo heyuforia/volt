@@ -37,7 +37,12 @@ pub fn set_project_root(path: Option<PathBuf>) {
 
 /// Validate that a path is within the project root or ~/.volt/ config dir.
 /// Returns the canonicalized path on success.
-fn validate_path(path: &str) -> Result<PathBuf, String> {
+///
+/// Callers should use the returned `PathBuf` for the actual operation instead
+/// of the raw frontend string — operating on the canonical form closes the
+/// TOCTOU window where a symlink component could be swapped between validation
+/// and use.
+pub(crate) fn validate_path(path: &str) -> Result<PathBuf, String> {
     let target = fs::canonicalize(path)
         .or_else(|_| {
             // File may not exist yet (create_file) — canonicalize parent
@@ -96,6 +101,12 @@ const DEFAULT_IGNORED: &[&str] = &[
 
 #[tauri::command]
 pub fn read_directory(path: String, ignored: Option<Vec<String>>) -> Result<Vec<DirectoryEntry>, String> {
+    // Validate but walk the raw frontend path: `fs::canonicalize` on Windows
+    // returns UNC-prefixed paths (\\?\C:\...), and returning those in entries
+    // breaks the frontend's relative-path computations in file-tree.js
+    // (git decoration, gitignore dimming, breadcrumbs) and the tab-dedup
+    // comparison in terminal.js. Operating on the raw path after validation
+    // keeps the frontend's path format consistent with what it passed in.
     validate_path(&path)?;
     let dir_path = Path::new(&path);
     if !dir_path.is_dir() {
@@ -179,18 +190,17 @@ fn detect_language(ext: &str) -> &'static str {
 
 #[tauri::command]
 pub fn read_file(path: String) -> Result<FileContent, String> {
-    validate_path(&path)?;
-    let file_path = Path::new(&path);
+    let file_path = validate_path(&path)?;
     if !file_path.is_file() {
         return Err(format!("Not a file: {}", path));
     }
 
-    let metadata = fs::metadata(&path).map_err(|e| format!("Failed to read file metadata: {}", e))?;
+    let metadata = fs::metadata(&file_path).map_err(|e| format!("Failed to read file metadata: {}", e))?;
     if metadata.len() > 5 * 1024 * 1024 {
         return Err("File too large (>5MB)".to_string());
     }
 
-    let bytes = fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let bytes = fs::read(&file_path).map_err(|e| format!("Failed to read file: {}", e))?;
     if is_binary(&bytes) {
         return Err("Binary file".to_string());
     }
@@ -239,13 +249,12 @@ fn detect_mime(ext: &str) -> Option<&'static str> {
 
 #[tauri::command]
 pub fn read_image_file(path: String) -> Result<ImageContent, String> {
-    validate_path(&path)?;
-    let file_path = Path::new(&path);
+    let file_path = validate_path(&path)?;
     if !file_path.is_file() {
         return Err(format!("Not a file: {}", path));
     }
 
-    let metadata = fs::metadata(&path)
+    let metadata = fs::metadata(&file_path)
         .map_err(|e| format!("Failed to read file metadata: {}", e))?;
     let size = metadata.len();
     if size > 20 * 1024 * 1024 {
@@ -260,7 +269,7 @@ pub fn read_image_file(path: String) -> Result<ImageContent, String> {
         .ok_or_else(|| format!("Unsupported image format: {}", ext))?
         .to_string();
 
-    let bytes = fs::read(&path)
+    let bytes = fs::read(&file_path)
         .map_err(|e| format!("Failed to read image: {}", e))?;
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
 
@@ -293,29 +302,28 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
 
 #[tauri::command]
 pub fn save_file(path: String, content: String) -> Result<(), String> {
-    validate_path(&path)?;
-    atomic_write(Path::new(&path), content.as_bytes())
+    let canonical = validate_path(&path)?;
+    atomic_write(&canonical, content.as_bytes())
 }
 
 // ── Swap files (crash recovery) ──
 
-fn swap_path(path: &str) -> PathBuf {
-    let p = Path::new(path);
-    let name = p.file_name().unwrap_or_default().to_string_lossy();
-    p.with_file_name(format!(".{}.volt-swap", name))
+fn swap_path(path: &Path) -> PathBuf {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    path.with_file_name(format!(".{}.volt-swap", name))
 }
 
 #[tauri::command]
 pub fn write_swap_file(path: String, content: String) -> Result<(), String> {
-    validate_path(&path)?;
-    fs::write(swap_path(&path), &content)
+    let canonical = validate_path(&path)?;
+    fs::write(swap_path(&canonical), &content)
         .map_err(|e| format!("Failed to write swap file: {}", e))
 }
 
 #[tauri::command]
 pub fn check_swap_file(path: String) -> Result<Option<String>, String> {
-    validate_path(&path)?;
-    let sp = swap_path(&path);
+    let canonical = validate_path(&path)?;
+    let sp = swap_path(&canonical);
     if sp.is_file() {
         Ok(fs::read_to_string(&sp).ok())
     } else {
@@ -325,8 +333,8 @@ pub fn check_swap_file(path: String) -> Result<Option<String>, String> {
 
 #[tauri::command]
 pub fn delete_swap_file(path: String) -> Result<(), String> {
-    validate_path(&path)?;
-    let sp = swap_path(&path);
+    let canonical = validate_path(&path)?;
+    let sp = swap_path(&canonical);
     if sp.exists() {
         fs::remove_file(&sp).map_err(|e| format!("Failed to delete swap file: {}", e))?;
     }
@@ -337,39 +345,56 @@ pub fn delete_swap_file(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn create_file(path: String) -> Result<(), String> {
-    validate_path(&path)?;
-    let p = Path::new(&path);
-    if p.exists() {
+    let canonical = validate_path(&path)?;
+    if canonical.exists() {
         return Err("File already exists".into());
     }
-    fs::write(&path, "").map_err(|e| format!("Failed to create file: {}", e))
+    fs::write(&canonical, "").map_err(|e| format!("Failed to create file: {}", e))
 }
 
 #[tauri::command]
 pub fn create_directory(path: String) -> Result<(), String> {
-    validate_path(&path)?;
-    let p = Path::new(&path);
-    if p.exists() {
+    let canonical = validate_path(&path)?;
+    if canonical.exists() {
         return Err("Directory already exists".into());
     }
-    fs::create_dir_all(&path).map_err(|e| format!("Failed to create directory: {}", e))
+    fs::create_dir_all(&canonical).map_err(|e| format!("Failed to create directory: {}", e))
 }
 
 #[tauri::command]
-pub fn rename_path(old_path: String, new_path: String) -> Result<(), String> {
-    validate_path(&old_path)?;
-    validate_path(&new_path)?;
-    fs::rename(&old_path, &new_path).map_err(|e| format!("Failed to rename: {}", e))
+pub fn rename_path(old_path: String, new_path: String, force: Option<bool>) -> Result<(), String> {
+    let old_canonical = validate_path(&old_path)?;
+    let new_canonical = validate_path(&new_path)?;
+    // Case-only rename on case-insensitive filesystems (Windows, default
+    // macOS) canonicalizes both paths to the same buffer — allow that and
+    // use the raw frontend strings for the actual rename so the new casing
+    // is preserved.
+    let case_only_rename = old_canonical == new_canonical;
+    // Reject overwrite unless the caller explicitly opted in via `force`
+    // (e.g. the file tree's drag-drop flow after the user confirms a
+    // "Replace?" prompt). Without `force`, fs::rename would silently
+    // clobber the destination; the default-deny here protects against both
+    // accidental clobber in the UI and a compromised frontend calling
+    // rename_path directly.
+    if !case_only_rename && !force.unwrap_or(false) && new_canonical.exists() {
+        return Err("Destination already exists".into());
+    }
+    if case_only_rename {
+        // Both paths have been validated above; the small TOCTOU window
+        // here is the cost of preserving case-only renames on Windows.
+        fs::rename(&old_path, &new_path).map_err(|e| format!("Failed to rename: {}", e))
+    } else {
+        fs::rename(&old_canonical, &new_canonical).map_err(|e| format!("Failed to rename: {}", e))
+    }
 }
 
 #[tauri::command]
 pub fn delete_path(path: String) -> Result<(), String> {
-    validate_path(&path)?;
-    let p = Path::new(&path);
-    if p.is_dir() {
-        fs::remove_dir_all(&path).map_err(|e| format!("Failed to delete: {}", e))
+    let canonical = validate_path(&path)?;
+    if canonical.is_dir() {
+        fs::remove_dir_all(&canonical).map_err(|e| format!("Failed to delete: {}", e))
     } else {
-        fs::remove_file(&path).map_err(|e| format!("Failed to delete: {}", e))
+        fs::remove_file(&canonical).map_err(|e| format!("Failed to delete: {}", e))
     }
 }
 
@@ -390,9 +415,19 @@ fn collect_files_recursive(dir: &Path, ignored: &[String], files: &mut Vec<PathB
         // Hide internal swap/temp files
         if name.ends_with(".volt-swap") || name.ends_with(".volt-tmp") { continue; }
         // Use file_type() instead of path.is_dir() — avoids an extra stat syscall
-        // per entry (file_type is free on most filesystems via readdir d_type)
-        let is_dir = entry.file_type().is_ok_and(|ft| ft.is_dir());
-        if is_dir {
+        // per entry (file_type is free on most filesystems via readdir d_type).
+        // file_type() does NOT follow symlinks on Win/macOS/Linux, so is_symlink()
+        // is authoritative here.
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        // Skip symlinks: a malicious project could ship `./link -> /etc` (or
+        // ~/.ssh) and search_in_files would otherwise read and return file
+        // content from outside the project root. Also prevents infinite
+        // recursion from self-referential symlinks.
+        if file_type.is_symlink() { continue; }
+        if file_type.is_dir() {
             // Skip hidden directories (e.g. .git, .vscode) but not hidden files
             if name.starts_with('.') { continue; }
             collect_files_recursive(&entry.path(), ignored, files, depth + 1)?;
@@ -413,8 +448,7 @@ pub async fn list_all_files(path: String, ignored: Option<Vec<String>>) -> Resul
 }
 
 fn list_all_files_inner(path: String, ignored: Option<Vec<String>>) -> Result<Vec<String>, String> {
-    validate_path(&path)?;
-    let root = Path::new(&path);
+    let root = validate_path(&path)?;
     if !root.is_dir() {
         return Err(format!("Not a directory: {}", path));
     }
@@ -422,10 +456,10 @@ fn list_all_files_inner(path: String, ignored: Option<Vec<String>>) -> Result<Ve
         DEFAULT_IGNORED.iter().map(|s| s.to_string()).collect()
     });
     let mut full_paths = Vec::new();
-    collect_files_recursive(root, &ignored_patterns, &mut full_paths, 0)?;
+    collect_files_recursive(&root, &ignored_patterns, &mut full_paths, 0)?;
     let files: Vec<String> = full_paths
         .iter()
-        .filter_map(|p| p.strip_prefix(root).ok())
+        .filter_map(|p| p.strip_prefix(&root).ok())
         .map(|p| p.to_string_lossy().to_string())
         .collect();
     Ok(files)
@@ -517,6 +551,12 @@ fn search_in_files_inner(
     ignored: Option<Vec<String>>,
     is_regex: bool,
 ) -> Result<SearchResults, String> {
+    // Validate but walk the raw path. The returned `SearchMatch.path` must
+    // be in the same form the frontend already uses elsewhere so that
+    // clicking a result can dedup against existing tabs — walking a
+    // canonical UNC root on Windows would produce `\\?\C:\...` result paths
+    // and break that match. Symlink safety is enforced inside
+    // `collect_files_recursive`, not by canonicalizing the root.
     validate_path(&path)?;
     let root = Path::new(&path);
     let ignored_patterns: Vec<String> = ignored.unwrap_or_else(|| {
@@ -631,6 +671,12 @@ pub fn is_directory(path: String) -> bool {
 
 #[tauri::command]
 pub fn open_in_file_manager(path: String) -> Result<(), String> {
+    // Deliberately operate on the raw (post-validation) path here rather than
+    // the canonical PathBuf returned by validate_path. fs::canonicalize on
+    // Windows returns UNC-prefixed paths (\\?\C:\...) which explorer.exe can
+    // render incorrectly. The TOCTOU risk on this command is limited to
+    // "redirect explorer to a different folder", which is not a privilege
+    // escalation — the user can already browse any folder themselves.
     validate_path(&path)?;
     let p = Path::new(&path);
     let dir = if p.is_file() {

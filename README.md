@@ -23,7 +23,7 @@ VSCode/VSCodium uses 300–800 MB of RAM by bundling Chromium and running hundre
 ## Features
 
 - **Multi-tab terminals** — multiple terminal sessions with drag-to-reorder tabs
-- **Split terminal panes** — split horizontally (`Ctrl+Shift+D`) or vertically (`Ctrl+Shift+E`), draggable dividers, click to focus
+- **Split terminal panes** — split horizontally (`Ctrl+Shift+D`) or vertically (`Ctrl+Shift+E`), draggable dividers, click to focus, close or drag panes out to merge/unmerge tabs
 - **Terminal search** — `Ctrl+F` to search terminal scrollback with highlighted matches, case sensitivity and regex toggles
 - **File tree** — sidebar with material file icons, search filter, lazy-loaded directories, git status indicators, drag-and-drop to move files/folders
 - **Code editor** — CodeMirror 6 with syntax highlighting for JS, TS, Rust, Python, Go, C, C++, Java, HTML, CSS, JSON, YAML, Markdown, Dart, TOML, Shell
@@ -36,7 +36,7 @@ VSCode/VSCodium uses 300–800 MB of RAM by bundling Chromium and running hundre
 - **File operations** — right-click context menu for new file, new folder, rename (with undo), delete, copy path, open in file manager
 - **Auto-save & crash recovery** — files auto-save after editing (configurable delay), swap files recover unsaved work after a crash
 - **Live file reload** — files edited externally (e.g. from the terminal) auto-update in the editor
-- **Recent folders** — welcome screen shows last 5 opened projects for quick access
+- **Recent folders** — welcome screen shows last 5 opened projects for quick access, individually removable
 - **Zoom** — `Ctrl+`/`Ctrl-` to adjust font size, `Ctrl+0` to reset
 - **Keyboard-driven** — full shortcut set for tabs, files, and navigation
 - **Drag and drop** — drop a folder to open it, drop a file to open or paste its path into the terminal; drag files/folders in the tree to move them (with undo)
@@ -110,12 +110,12 @@ cargo tauri dev
 | `Alt+Left` / `Alt+Right` | Next / previous tab (fallback) |
 | `Ctrl+B` | Toggle sidebar |
 | `Ctrl+,` | Settings |
-| `Ctrl+` / `Ctrl-` | Zoom in / out |
+| `Ctrl+=` / `Ctrl+-` | Zoom in / out |
 | `Ctrl+0` | Reset zoom |
 
 ## Configuration
 
-Volt stores config at `~/.volt/config.json`. Settings are accessible via the gear icon in the status bar.
+Volt stores config at `~/.volt/config.json`. Open the settings panel with `Ctrl+,`.
 
 | Setting | Default | Description |
 |---|---|---|

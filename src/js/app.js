@@ -8,7 +8,6 @@ import { initTerminals, createTerminalTab, getActiveTerminalCount, setTerminalCo
 import { createEditorView, getEditorContent, markClean, replaceEditorContent, goToLine } from './editor.js';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { initStatusBar } from './status-bar.js';
 import { initAnalyzer, startAnalyzer, stopAnalyzer } from './analyzer.js';
 import { initEmulator, showEmulatorButton, hideEmulatorButton } from './emulator.js';
 import { initSettings } from './settings.js';
@@ -903,27 +902,49 @@ function toggleMarkdownPreview() {
       ALLOW_DATA_ATTR: false,
     });
 
-    // Save editor scroll position before hiding
+    // Save editor scroll, then map proportionally onto the preview
     const cmEl = tab.wrapper.querySelector('.cm-editor');
     if (cmEl) {
-      tab._savedScrollTop = tab.editorView.scrollDOM.scrollTop;
+      const sd = tab.editorView.scrollDOM;
+      tab._savedScrollTop = sd.scrollTop;
+      const denom = sd.scrollHeight - sd.clientHeight;
+      tab._savedScrollRatio = denom > 0 ? sd.scrollTop / denom : 0;
       cmEl.style.display = 'none';
     }
     preview.classList.add('active');
+    // Restore preview scroll: prefer its own last position, else map from editor ratio
+    requestAnimationFrame(() => {
+      if (tab._previewScrollTop != null) {
+        preview.scrollTop = tab._previewScrollTop;
+      } else if (tab._savedScrollRatio != null) {
+        const denom = preview.scrollHeight - preview.clientHeight;
+        preview.scrollTop = Math.max(0, denom * tab._savedScrollRatio);
+      }
+    });
   } else {
-    // Show editor, hide preview
+    // Save preview scroll + ratio before hiding
+    const preview = tab.wrapper.querySelector('.md-preview');
+    let previewRatio = null;
+    if (preview) {
+      tab._previewScrollTop = preview.scrollTop;
+      const denom = preview.scrollHeight - preview.clientHeight;
+      previewRatio = denom > 0 ? preview.scrollTop / denom : 0;
+      preview.classList.remove('active');
+    }
+    // Show editor, restore scroll (prefer saved exact position, else map from preview ratio)
     const cmEl = tab.wrapper.querySelector('.cm-editor');
     if (cmEl) {
       cmEl.style.display = '';
-      // Restore editor scroll position after unhiding
-      if (tab._savedScrollTop != null) {
-        requestAnimationFrame(() => {
-          tab.editorView.scrollDOM.scrollTop = tab._savedScrollTop;
-        });
-      }
+      requestAnimationFrame(() => {
+        const sd = tab.editorView.scrollDOM;
+        if (tab._savedScrollTop != null) {
+          sd.scrollTop = tab._savedScrollTop;
+        } else if (previewRatio != null) {
+          const denom = sd.scrollHeight - sd.clientHeight;
+          sd.scrollTop = Math.max(0, denom * previewRatio);
+        }
+      });
     }
-    const preview = tab.wrapper.querySelector('.md-preview');
-    if (preview) preview.classList.remove('active');
   }
 }
 
@@ -1083,7 +1104,6 @@ async function init() {
   initSidebarResize();
   initFileTree();
   await initTerminals();
-  initStatusBar();
   initAnalyzer(config?.diagnosticsPanelHeight, (height) => {
     if (!config) config = {};
     config.diagnosticsPanelHeight = height;

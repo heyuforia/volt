@@ -9,7 +9,6 @@ mod git;
 mod instance;
 mod lsp;
 mod pty;
-mod system;
 mod watcher;
 
 fn main() {
@@ -101,7 +100,6 @@ fn main() {
             pty::write_terminal,
             pty::resize_terminal,
             pty::kill_terminal,
-            system::get_system_stats,
             watcher::watch_file,
             watcher::unwatch_file,
             watcher::unwatch_all_files,

@@ -103,8 +103,16 @@ fn git_status_inner(path: &str) -> Result<GitStatus, String> {
         }
     }
 
+    // Security: override any repo-level `core.fsmonitor` via -c so a malicious
+    // .git/config inside an opened folder cannot execute attacker binaries when
+    // the file tree auto-refreshes git status. `protocol.file.allow=never` is
+    // belt-and-suspenders against file:// submodule/include vectors.
     let output = Command::new("git")
-        .args(["status", "--porcelain", "--ignored"])
+        .args([
+            "-c", "core.fsmonitor=false",
+            "-c", "protocol.file.allow=never",
+            "status", "--porcelain", "--ignored",
+        ])
         .current_dir(git_root)
         .output()
         .map_err(|e| format!("Failed to run git: {}", e))?;

@@ -125,6 +125,17 @@ pub fn spawn_terminal(
     let mut cmd = CommandBuilder::new(&shell_cmd);
     cmd.cwd(&working_dir);
 
+    // portable-pty's CommandBuilder starts with an empty environment, so we
+    // must forward the parent process env explicitly. Without this, macOS
+    // GUI-launched Volt spawns shells with no PATH/HOME, and — critically —
+    // no TERM, which puts zsh's line editor into dumb mode and breaks
+    // Backspace/Enter/arrow keys.
+    for (key, val) in std::env::vars() {
+        cmd.env(key, val);
+    }
+    // Force a sane TERM even if the parent didn't have one set.
+    cmd.env("TERM", "xterm-256color");
+
     let child = pair
         .slave
         .spawn_command(cmd)

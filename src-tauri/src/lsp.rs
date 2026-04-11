@@ -629,6 +629,7 @@ pub fn stop_analyzer() -> Result<(), String> {
 
 #[tauri::command]
 pub fn lsp_did_open(path: String, language: String, content: String) -> Result<(), String> {
+    crate::fs::validate_path(&path)?;
     let uri = path_to_uri(&path);
     let language_id = lsp_language_id(&language).to_string();
 
@@ -656,6 +657,7 @@ pub fn lsp_did_open(path: String, language: String, content: String) -> Result<(
 
 #[tauri::command]
 pub fn lsp_did_change(path: String, content: String) -> Result<(), String> {
+    crate::fs::validate_path(&path)?;
     let uri = path_to_uri(&path);
 
     let version = {
@@ -684,6 +686,7 @@ pub fn lsp_did_change(path: String, content: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn lsp_did_save(path: String) -> Result<(), String> {
+    crate::fs::validate_path(&path)?;
     let uri = path_to_uri(&path);
 
     let msg = serde_json::json!({
@@ -701,6 +704,7 @@ pub fn lsp_did_save(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn lsp_did_close(path: String) -> Result<(), String> {
+    crate::fs::validate_path(&path)?;
     let uri = path_to_uri(&path);
 
     // Remove version tracking

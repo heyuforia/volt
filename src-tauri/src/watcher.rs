@@ -117,6 +117,7 @@ pub fn watch_file(
     path: String,
     state: tauri::State<'_, Mutex<FileWatcherState>>,
 ) -> Result<(), String> {
+    crate::fs::validate_path(&path)?;
     let mut s = state.lock().map_err(|e| e.to_string())?;
     let p = PathBuf::from(&path);
     if s.watched.contains(&p) {
@@ -175,6 +176,7 @@ pub fn watch_directory(
     path: String,
     state: tauri::State<'_, Mutex<DirWatcherState>>,
 ) -> Result<(), String> {
+    crate::fs::validate_path(&path)?;
     let mut s = state.lock().map_err(|e| e.to_string())?;
     let p = PathBuf::from(&path);
 

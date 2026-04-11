@@ -1058,13 +1058,6 @@ button:hover {
   letter-spacing: 0.3px;
 }
 
-#status-resources {
-  color: var(--text-secondary);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  letter-spacing: -0.2px;
-}
-
 /* ── Context menu ── */
 .context-menu {
   position: fixed;
